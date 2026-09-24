@@ -1,0 +1,33 @@
+{
+  "dataset_version": "2026.1",
+  "source": "EPIAŞ Gün Öncesi Piyasası (GÖP) & Dengeleme Güç Piyasası (DGP)",
+  "reference_date": "2026-09-16",
+  "market_zone": "TR-NATIONAL",
+  "currency": "TRY",
+  "records": [
+    {"timestamp": "2026-09-16T00:00:00+03:00", "ptf": 2450.50, "smf": 2300.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T01:00:00+03:00", "ptf": 2180.00, "smf": 2050.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T02:00:00+03:00", "ptf": 1950.20, "smf": 1800.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T03:00:00+03:00", "ptf": 1750.00, "smf": 1600.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T04:00:00+03:00", "ptf": 1680.40, "smf": 1550.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T05:00:00+03:00", "ptf": 1920.00, "smf": 1900.00, "direction": "BALANCED"},
+    {"timestamp": "2026-09-16T06:00:00+03:00", "ptf": 2650.00, "smf": 2800.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T07:00:00+03:00", "ptf": 3250.00, "smf": 3400.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T08:00:00+03:00", "ptf": 2850.00, "smf": 2900.00, "direction": "BALANCED"},
+    {"timestamp": "2026-09-16T09:00:00+03:00", "ptf": 2100.00, "smf": 1950.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T10:00:00+03:00", "ptf": 1450.00, "smf": 1300.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T11:00:00+03:00", "ptf": 950.00,  "smf": 850.00,  "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T12:00:00+03:00", "ptf": 820.00,  "smf": 700.00,  "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T13:00:00+03:00", "ptf": 890.00,  "smf": 750.00,  "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T14:00:00+03:00", "ptf": 1250.00, "smf": 1100.00, "direction": "ENERGY_SURPLUS"},
+    {"timestamp": "2026-09-16T15:00:00+03:00", "ptf": 1850.00, "smf": 1900.00, "direction": "BALANCED"},
+    {"timestamp": "2026-09-16T16:00:00+03:00", "ptf": 2750.00, "smf": 3100.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T17:00:00+03:00", "ptf": 3950.00, "smf": 4300.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T18:00:00+03:00", "ptf": 4800.00, "smf": 5200.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T19:00:00+03:00", "ptf": 5000.00, "smf": 5450.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T20:00:00+03:00", "ptf": 4650.00, "smf": 4900.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T21:00:00+03:00", "ptf": 3800.00, "smf": 3900.00, "direction": "ENERGY_DEFICIT"},
+    {"timestamp": "2026-09-16T22:00:00+03:00", "ptf": 3100.00, "smf": 3000.00, "direction": "BALANCED"},
+    {"timestamp": "2026-09-16T23:00:00+03:00", "ptf": 2650.00, "smf": 2500.00, "direction": "ENERGY_SURPLUS"}
+  ]
+}

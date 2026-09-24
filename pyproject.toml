@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fleksa"
+version = "0.1.0"
+description = "Autonomous Energy Flexibility, Distributed BESS Arbitrage & Grid-Interactive AI Compute Demand Response Engine"
+readme = "FLEKSA.md"
+authors = [{ name = "Fleksa Contributors" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0.0",
+    "cryptography>=41.0.0",
+    "scipy>=1.11.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]
+
+[project.scripts]
+fleksa = "fleksa.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+pythonpath = ["src", "."]

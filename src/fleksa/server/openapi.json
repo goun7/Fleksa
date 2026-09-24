@@ -1,0 +1,270 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fleksa Sovereign Telemetry & Optimization API",
+    "version": "0.1.0",
+    "description": "Autonomous Energy Flexibility & Compute Demand Response REST API for AI Datacenters and Hybrid BESS facilities."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8076",
+      "description": "Local Telemetry Cockpit Node"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Healthcheck and engine status probe",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Engine health and standards status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "version": { "type": "string" },
+                    "engine": { "type": "string" },
+                    "solver": { "type": "string" },
+                    "standards": { "type": "array", "items": { "type": "string" } },
+                    "benchmark_records_available": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmark": {
+      "get": {
+        "summary": "Get 2026 EPIAŞ Day-Ahead and Balancing Market Benchmark Prices",
+        "operationId": "getBenchmarkPrices",
+        "responses": {
+          "200": {
+            "description": "24-hour benchmark records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "dataset_version": { "type": "string" },
+                    "records": { "type": "array" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/solve": {
+      "post": {
+        "summary": "Execute Receding Horizon MILP MPC Optimization",
+        "operationId": "solveDispatch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "initial_soc": { "type": "number", "default": 200.0 },
+                  "capacity": { "type": "number", "default": 500.0 },
+                  "max_kw": { "type": "number", "default": 250.0 },
+                  "gpu_cap_min": { "type": "number", "default": 0.50 },
+                  "water_cost_per_kwh": { "type": "number", "default": 0.0, "description": "Evaporative cooling water footprint cost in TRY/kWh" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Optimal 24h dispatch plan with battery degradation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "projected_cost_try": { "type": "number" },
+                    "expected_savings_try": { "type": "number" },
+                    "baseline_cost_try": { "type": "number" },
+                    "hourly": { "type": "object" },
+                    "degradation": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/simulate-frequency-event": {
+      "post": {
+        "summary": "Simulate TEİAŞ Primary Frequency Response (PFR) Under-Frequency Event",
+        "operationId": "simulateFrequencyEvent",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "freq_deviation_hz": { "type": "number", "default": -0.18 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sub-28ms DVFS and BESS response timeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event_type": { "type": "string" },
+                    "response_time_ms": { "type": "number" },
+                    "compliance": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/verify-policy": {
+      "post": {
+        "summary": "Verify Flex-Policy v2 YAML Specification against AST Safety Guards",
+        "operationId": "verifyPolicy",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["policy_yaml"],
+                "properties": {
+                  "policy_yaml": { "type": "string" },
+                  "skip_signature": { "type": "boolean", "default": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Valid policy summary" },
+          "422": { "description": "Validation or safety guard violation" }
+        }
+      }
+    },
+    "/api/arbitrage-gate": {
+      "post": {
+        "summary": "Evaluate Theorem 1 Economic Arbitrage Gate Viability",
+        "operationId": "evaluateArbitrageGate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "charge_price": { "type": "number", "default": 1.20 },
+                  "discharge_price": { "type": "number", "default": 4.80 },
+                  "rte": { "type": "number", "default": 0.88 },
+                  "degradation_cost": { "type": "number", "default": 0.35 },
+                  "risk_premium": { "type": "number", "default": 0.05 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Economic arbitrage evaluation and verdict" }
+        }
+      }
+    },
+    "/api/canary/quorum": {
+      "post": {
+        "summary": "Verify Multi-Source Byzantine Price Feed Quorum Consensus",
+        "operationId": "verifyCanaryQuorum",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "epias": { "type": "number", "default": 2450.0 },
+                  "teias": { "type": "number", "default": 2400.0 },
+                  "regional": { "type": "number", "default": 2380.0 },
+                  "max_divergence_pct": { "type": "number", "default": 35.0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Consensus achieved" },
+          "409": { "description": "Byzantine outlier divergence detected" }
+        }
+      }
+    },
+    "/api/audit/baseline": {
+      "post": {
+        "summary": "Compute IPMVP Option B Baseline, Savings, and ASHRAE 14 Statistical Metrics",
+        "operationId": "computeAuditBaseline",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "history": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } },
+                  "actual": { "type": "array", "items": { "type": "number" } },
+                  "event_start_hour": { "type": "integer", "default": 17 },
+                  "event_hours": { "type": "array", "items": { "type": "integer" } },
+                  "ptf": { "type": "array", "items": { "type": "number" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Baseline curves, net savings, and ASHRAE 14 CV(RMSE)/NMBE compliance" }
+        }
+      }
+    },
+    "/api/export-credential": {
+      "get": {
+        "summary": "Export W3C Verifiable Credential v2.0 JSON-LD",
+        "operationId": "exportVerifiableCredential",
+        "responses": {
+          "200": {
+            "description": "Ed25519-signed W3C VC JSON-LD",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "@context": { "type": "array" },
+                    "type": { "type": "array" },
+                    "credentialSubject": { "type": "object" },
+                    "proof": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

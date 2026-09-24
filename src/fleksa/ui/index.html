@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fleksa Cockpit — Sovereign Energy Flexibility & Compute DR Engine</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Sovereign Telemetry Header -->
+  <header class="telemetry-header">
+    <div class="brand-block">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">FLEKSA COCKPIT</div>
+        <div class="brand-subtitle">Sovereign Energy Flexibility & Compute DR Engine</div>
+      </div>
+    </div>
+
+    <!-- Navigation View Tabs -->
+    <nav class="cockpit-nav">
+      <button class="nav-tab active" data-view="view-dispatch">
+        <span class="nav-tab-icon">⚡</span>
+        <span>24h Dispatch</span>
+      </button>
+      <button class="nav-tab" data-view="view-audit">
+        <span class="nav-tab-icon">📊</span>
+        <span>IPMVP M&amp;V</span>
+      </button>
+      <button class="nav-tab" data-view="view-policy">
+        <span class="nav-tab-icon">🛡️</span>
+        <span>Flex-Policy v2</span>
+      </button>
+      <button class="nav-tab" data-view="view-arbitrage">
+        <span class="nav-tab-icon">⚖️</span>
+        <span>Arbitrage &amp; Canary</span>
+      </button>
+    </nav>
+
+    <!-- Top Status Badges & Quick Action Buttons -->
+    <div class="system-status-pills">
+      <div class="status-pill">
+        <span class="pill-dot pulsing" id="gridDot"></span>
+        <span>TEİAŞ Grid: <strong class="mono" id="gridFreqDisplay">50.000 Hz</strong></span>
+      </div>
+      <div class="status-pill">
+        <span class="pill-dot" style="background:#06b6d4; box-shadow: 0 0 8px #06b6d4;"></span>
+        <span>Node: <strong class="mono">TR-IST-EQX-02</strong></span>
+      </div>
+      <button class="btn-action" id="btnExportCsv" title="Download 24h Optimal Dispatch Schedule CSV">
+        <span>📥 CSV</span>
+      </button>
+      <button class="btn-action" id="btnOpenMoat" style="background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24;">
+        <span>🏆 Moat Matrix</span>
+      </button>
+      <button class="btn-action btn-emerald" id="btnRecalculate">
+        <span>⚡ Recalculate</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Sub-Header Asset Configuration Bar (Active for Dispatch View) -->
+  <div class="config-bar" id="topConfigBar">
+    <div class="config-item">
+      <label for="cfgCapacity">BESS Cap (kWh)</label>
+      <input type="number" id="cfgCapacity" value="500" min="100" max="5000" step="50" class="mono cfg-input">
+    </div>
+    <div class="config-item">
+      <label for="cfgMaxKw">Max Power (kW)</label>
+      <input type="number" id="cfgMaxKw" value="250" min="50" max="2500" step="25" class="mono cfg-input">
+    </div>
+    <div class="config-item">
+      <label for="cfgInitialSoc">Initial SoC (kWh)</label>
+      <input type="number" id="cfgInitialSoc" value="200" min="20" max="4000" step="20" class="mono cfg-input">
+    </div>
+    <div class="config-item">
+      <label for="cfgGpuCapMin">Min GPU Cap</label>
+      <select id="cfgGpuCapMin" class="mono cfg-input">
+        <option value="0.50">50% (Max DR Curtailment)</option>
+        <option value="0.65" selected>65% (Balanced Throughput)</option>
+        <option value="0.80">80% (Strict LLM SLA)</option>
+      </select>
+    </div>
+    <div class="config-item-checkbox">
+      <label for="cfgWaterPenalty" title="Nature npj Clean Water 2025: 1.8 L/kWh evaporative cooling footprint (+0.081 ₺/kWh)">
+        <input type="checkbox" id="cfgWaterPenalty">
+        <span>Water Footprint (Nature 2025)</span>
+      </label>
+    </div>
+    <div style="margin-left: auto; display: flex; gap: 0.5rem; align-items: center;">
+      <button class="btn-action" id="btnPlaySim" style="background: rgba(6, 182, 212, 0.12); border-color: rgba(6, 182, 212, 0.4); color: #38bdf8; font-size: 0.74rem;">
+        <span>▶ Play 24h</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- VIEW 1: 24h Dispatch & Physics Cockpit -->
+  <main class="view-panel active" id="view-dispatch">
+    <div class="dashboard-grid">
+      <!-- Left Column: KPIs, Chart, Scrubber -->
+      <section class="left-stage">
+        <!-- KPI Row -->
+        <div class="kpi-row">
+          <div class="kpi-box">
+            <div class="kpi-label">Baseline Cost (Flat Grid)</div>
+            <div class="kpi-value mono" id="kpiBaseline">₺32,450.00</div>
+            <div class="kpi-sub">Unoptimized 24h facility draw</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Dispatched Net Cost</div>
+            <div class="kpi-value mono emerald" id="kpiDispatched">₺24,110.00</div>
+            <div class="kpi-sub">HiGHS MPC Arbitrage + PV + DR</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Arbitrage Net Yield</div>
+            <div class="kpi-value mono cyan" id="kpiSavings">₺8,340.00 (+25.7%)</div>
+            <div class="kpi-sub">Zero-Loss Invariant Guarantee</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Carbon Abatement</div>
+            <div class="kpi-value mono" id="kpiCarbon">482.4 kg CO₂</div>
+            <div class="kpi-sub">0.48 kg/kWh TEİAŞ Marginal Factor</div>
+          </div>
+        </div>
+
+        <!-- 24h Rolling Horizon Dispatch Chart Card -->
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📊 24-Hour Rolling Horizon Dispatch &amp; EPIAŞ Duck Curve</span>
+            </div>
+            <div class="card-badge mono" id="marketZoneBadge">EPIAŞ GÖP/DGP: 2026.1 (TR-NATIONAL)</div>
+          </div>
+
+          <div class="chart-container" id="chartWrapper">
+            <div class="chart-tooltip" id="chartTooltip"></div>
+            <svg class="chart-svg" id="dispatchSvg" viewBox="0 0 880 320" preserveAspectRatio="none">
+              <!-- Dynamically populated by app.js -->
+            </svg>
+          </div>
+
+          <div class="chart-legend">
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #f59e0b;"></span>
+              <span>Solar PV Generation (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #94a3b8; border-bottom: 2px dashed #94a3b8;"></span>
+              <span>Base Facility Load (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #10b981;"></span>
+              <span>BESS Charge (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #06b6d4;"></span>
+              <span>BESS Discharge (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #e11d48;"></span>
+              <span>EPIAŞ PTF Day-Ahead (₺/kWh)</span>
+            </div>
+          </div>
+
+          <!-- 24h Scrubber Slider -->
+          <div class="scrubber-panel">
+            <span style="font-size: 0.78rem; color: var(--text-secondary); min-width: 110px;">
+              Hour: <strong class="mono" id="scrubberHourText">12:00 (T=12)</strong>
+            </span>
+            <input type="range" class="scrubber-slider" id="scrubberInput" min="0" max="23" value="12">
+            <div class="mono" id="scrubberDetails" style="font-size: 0.78rem; color: var(--accent-cyan);">
+              PTF: ₺0.89/kWh | Solar: 250 kW | BESS: +120 kW Chg
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: BESS Physics, GPU DVFS & Verifiable Credential -->
+      <section class="side-stack">
+        <!-- BESS 2-RC Thevenin Physics Card -->
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🔋 BESS 2-RC Thevenin Physics</div>
+            <div class="card-badge mono" id="bessBadge">500 kWh / 250 kW</div>
+          </div>
+
+          <div class="gauge-grid">
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">State of Charge (SoC)</span>
+              <span class="telemetry-tile-val mono emerald" id="tileSoc">68.4%</span>
+              <span style="font-size: 0.68rem; color: var(--text-muted);" id="tileSocKwh">342.0 kWh</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Terminal Voltage (V_term)</span>
+              <span class="telemetry-tile-val mono" id="tileVterm">748.2 V</span>
+              <span style="font-size: 0.68rem; color: var(--text-muted);">234x LFP Prismatics</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Cell Temp (T_cell)</span>
+              <span class="telemetry-tile-val mono" id="tileTemp">26.8 °C</span>
+              <span style="font-size: 0.68rem; color: var(--text-muted);">Cutoff Limit: 55.0 °C</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Wang &amp; Ecker SoH</span>
+              <span class="telemetry-tile-val mono cyan" id="tileSoh">99.982%</span>
+              <span style="font-size: 0.68rem; color: var(--text-muted);" id="tileFade">Fade: -0.018%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- GPU Cluster & DVFS Power Capping Card -->
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🖥️ GPU Cluster &amp; DVFS Power Capping</div>
+            <div class="card-badge mono">16x NVIDIA H100 SXM5</div>
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Power Cap Modulation (NVML DVFS)</span>
+              <strong class="mono emerald" id="valGpuCap">100% (700W / GPU)</strong>
+            </div>
+            <input type="range" class="range-input" id="sliderGpuCap" min="50" max="100" value="100">
+          </div>
+
+          <div class="slider-group" style="margin-top: 0.75rem;">
+            <div class="slider-label-row">
+              <span>Speculative Decoding Draft Depth (K)</span>
+              <strong class="mono cyan" id="valSpecK">K = 5 tokens</strong>
+            </div>
+            <div class="mono" style="font-size: 0.74rem; color: var(--text-muted);" id="speculativeInfo">
+              Token Latency: 18.2 ms | Acceptance Rate: 78.4% | Power Curtailment: 0.0 kW
+            </div>
+          </div>
+
+          <!-- TEİAŞ Frequency Disturbance Trigger -->
+          <div class="sim-box">
+            <div class="sim-metric-row">
+              <span>⚡ TEİAŞ PFR Disturbance Test</span>
+              <button class="btn-action btn-rose" id="btnTriggerPfr" style="padding: 0.25rem 0.6rem; font-size: 0.72rem;">
+                Trigger -180 mHz Event
+              </button>
+            </div>
+            <div class="sim-metric-row" style="margin-top: 0.5rem;">
+              <span style="color: var(--text-muted);">Fleksa Response Time:</span>
+              <strong class="mono emerald" id="valResponseTime">28.0 ms (Target &lt; 200 ms)</strong>
+            </div>
+            <div class="sim-metric-row">
+              <span style="color: var(--text-muted);">Compliance Grade:</span>
+              <strong class="mono" style="color: #38bdf8;" id="valGrade">GRADE A+ (Verified)</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cryptographic Proof & IPMVP Option B Card -->
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🔒 Verifiable Credential &amp; Ledger</div>
+            <div class="card-badge mono">W3C VC v2.0 / Ed25519</div>
+          </div>
+
+          <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+            <div>Merkle Root: <span class="mono" style="color: #38bdf8; word-break: break-all;" id="merkleRootVal">e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span></div>
+            <div style="margin-top: 0.25rem;">Signer DID: <span class="mono">did:kredent:facility:tr-ist-eqx-02</span></div>
+          </div>
+
+          <button class="btn-action" id="btnViewVc" style="width: 100%; justify-content: center;">
+            📜 View W3C Verifiable Credential JSON-LD
+          </button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- VIEW 2: IPMVP M&V Studio (EVO 10001-1:2022 & ASHRAE Guideline 14) -->
+  <main class="view-panel" id="view-audit">
+    <div class="dashboard-grid">
+      <!-- Left Column: Baseline vs Actual Meter Chart -->
+      <section class="left-stage">
+        <div class="kpi-row">
+          <div class="kpi-box">
+            <div class="kpi-label">ASHRAE 14 CV(RMSE)</div>
+            <div class="kpi-value mono emerald" id="mvCvRmseVal">1.53%</div>
+            <div class="kpi-sub">Standard Threshold: &le; 20.0%</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">ASHRAE 14 NMBE</div>
+            <div class="kpi-value mono cyan" id="mvNmbeVal">-0.81%</div>
+            <div class="kpi-sub">Standard Threshold: &le; &plusmn;5.0%</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Net Curtailed Energy</div>
+            <div class="kpi-value mono" id="mvCurtailedVal" style="color:#fbbf24;">399.2 kWh</div>
+            <div class="kpi-sub">Event Hours 17:00 – 20:00</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Verified Savings Yield</div>
+            <div class="kpi-value mono emerald" id="mvFinancialVal">₺1,517.00</div>
+            <div class="kpi-sub">Option B EVO 10001-1:2022</div>
+          </div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📈 10-in-10 Baseline vs. Actual Facility Demand (kW)</span>
+            </div>
+            <div class="card-badge mono" id="mvComplianceBadge" style="background:rgba(16,185,129,0.15); color:#34d399; border-color:rgba(16,185,129,0.3);">
+              GRADE_A_CERTIFIED
+            </div>
+          </div>
+
+          <div class="chart-container" id="mvChartWrapper" style="height: 320px;">
+            <svg class="chart-svg" id="mvSvg" viewBox="0 0 880 300" preserveAspectRatio="none">
+              <!-- Dynamically rendered by app.js -->
+            </svg>
+          </div>
+
+          <div class="chart-legend">
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #94a3b8; border-bottom: 2px dashed #94a3b8;"></span>
+              <span>10-in-10 Unadjusted Baseline (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #38bdf8;"></span>
+              <span>Adjusted Baseline (2h Pre-Calibrated) (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: #10b981;"></span>
+              <span>Actual Metered Draw (kW)</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-swatch" style="background: rgba(16,185,129,0.35);"></span>
+              <span>Curtailed Shaded Zone (kWh)</span>
+            </div>
+          </div>
+
+          <!-- M&V Calibration Control -->
+          <div class="scrubber-panel" style="margin-top: 0.75rem;">
+            <span style="font-size: 0.78rem; color: var(--text-secondary); min-width: 180px;">
+              Pre-Event Adjustment (h=15,16):
+            </span>
+            <input type="range" class="scrubber-slider" id="mvAdjSlider" min="-20" max="20" value="0">
+            <div class="mono" id="mvAdjReadout" style="font-size: 0.78rem; color: var(--accent-cyan); min-width: 120px;">
+              Additive: 0.0 kW (1.00x)
+            </div>
+            <button class="btn-action btn-emerald" id="btnRecalcMv" style="font-size: 0.72rem; padding: 0.25rem 0.6rem;">
+              Recalculate M&amp;V
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: IPMVP Verification & Merkle Digest -->
+      <section class="side-stack">
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">📜 IPMVP Option B Audit Summary</div>
+            <div class="card-badge mono">EVO 10001-1:2022</div>
+          </div>
+          <div style="font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary);">
+            <div>• <strong>Protocol:</strong> IPMVP Option B (Continuous Measurement of Isolation)</div>
+            <div>• <strong>Statistical Standard:</strong> ASHRAE Guideline 14-2014 &amp; 2023 Update</div>
+            <div>• <strong>Baseline Pool:</strong> 10 Prior Similar Non-Holiday Workdays</div>
+            <div>• <strong>Adjustment Window:</strong> 2 Hours Preceding Event Trigger</div>
+            <div>• <strong>Max Calibration Cap:</strong> &plusmn;20% Symmetric Clamping</div>
+            <div style="margin-top: 0.6rem; padding: 0.6rem; background: rgba(10,15,24,0.6); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+              <div style="color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase;">Cryptographic Audit Leaf</div>
+              <div class="mono" style="font-size: 0.72rem; color: #38bdf8; word-break: break-all;" id="mvLeafHash">f1290fb0b1238062a266670a878acc4223cd10a5d9885352222d3d4fd938f2af</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🔬 Statistical Rigor Table</div>
+          </div>
+          <table class="matrix-table" style="margin-top: 0;">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Calculated</th>
+                <th>Limit</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>CV(RMSE)</td>
+                <td class="mono" id="tblCvVal">1.53%</td>
+                <td class="mono">&le; 20.0%</td>
+                <td style="color:#34d399; font-weight:700;">PASS</td>
+              </tr>
+              <tr>
+                <td>NMBE</td>
+                <td class="mono" id="tblNmbeVal">-0.81%</td>
+                <td class="mono">&le; &plusmn;5.0%</td>
+                <td style="color:#34d399; font-weight:700;">PASS</td>
+              </tr>
+              <tr>
+                <td>Sampling Rate</td>
+                <td class="mono">15 min OSOS</td>
+                <td class="mono">&le; 60 min</td>
+                <td style="color:#34d399; font-weight:700;">PASS</td>
+              </tr>
+              <tr>
+                <td>Degrees of Freedom</td>
+                <td class="mono">p = 1</td>
+                <td class="mono">Mean Adj</td>
+                <td style="color:#34d399; font-weight:700;">PASS</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- VIEW 3: Flex-Policy v2 Sovereign Studio -->
+  <main class="view-panel" id="view-policy">
+    <div class="dashboard-grid">
+      <!-- Left Column: Interactive YAML Policy Editor -->
+      <section class="left-stage">
+        <div class="cockpit-card" style="height: 100%;">
+          <div class="card-header">
+            <div class="card-title">
+              <span>🛡️ Flex-Policy v2 YAML Specification &amp; AST Verifier</span>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <select id="selPolicyPreset" class="mono cfg-input" style="width: 220px;">
+                <option value="preset-colo" selected>Preset: Equinix Enterprise Co-Lo</option>
+                <option value="preset-strict">Preset: H100 Strict SLA Factory</option>
+                <option value="preset-arbitrage">Preset: Aggressive BESS Arbitrage</option>
+                <option value="preset-islanding">Preset: Microgrid Islanding Guard</option>
+              </select>
+              <button class="btn-action btn-emerald" id="btnValidatePolicy">
+                <span>✓ Verify AST &amp; Safety</span>
+              </button>
+            </div>
+          </div>
+
+          <textarea class="policy-editor mono" id="txtPolicyYaml" spellcheck="false"></textarea>
+
+          <div class="policy-status-bar" id="policyStatusBanner">
+            <span class="mono" style="color: #34d399;" id="policyStatusText">✓ Ready to verify policy against AST safety invariants.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Safety Guards & Live Rule Trigger Engine -->
+      <section class="side-stack">
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🔒 Invariant Safety Guards</div>
+            <div class="card-badge mono">Ed25519 AST Rules</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.78rem;">
+            <div class="guard-pill pass">
+              <span class="guard-dot"></span>
+              <span>Fail-Closed on Telemetry Loss (Mandatory)</span>
+            </div>
+            <div class="guard-pill pass">
+              <span class="guard-dot"></span>
+              <span>BESS SoC Min Reserve &ge; 10.0%</span>
+            </div>
+            <div class="guard-pill pass">
+              <span class="guard-dot"></span>
+              <span>BESS SoC Max Ceil &le; 98.0%</span>
+            </div>
+            <div class="guard-pill pass">
+              <span class="guard-dot"></span>
+              <span>Thermal Cell Cutoff &le; 55.0 °C</span>
+            </div>
+            <div class="guard-pill pass">
+              <span class="guard-dot"></span>
+              <span>Class-0 Zero-Throttle Invariant</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">⚡ Live Rule Test Sandbox</div>
+          </div>
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <span>Simulated Spot PTF</span>
+              <strong class="mono" id="simRulePtfText">₺4.80/kWh</strong>
+            </div>
+            <input type="range" class="range-input" id="sliderRulePtf" min="0.5" max="6.5" step="0.1" value="4.8">
+          </div>
+          <div class="slider-group" style="margin-top: 0.75rem;">
+            <div class="slider-label-row">
+              <span>Simulated BESS SoC</span>
+              <strong class="mono" id="simRuleSocText">75%</strong>
+            </div>
+            <input type="range" class="range-input" id="sliderRuleSoc" min="10" max="100" step="5" value="75">
+          </div>
+          <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Triggered AST Actions</div>
+            <div class="mono" style="font-size: 0.74rem; color: #38bdf8; margin-top: 0.3rem;" id="simTriggeredActions">
+              [RULE-PEAK-01] BESS -> DISCHARGE (200 kW)<br>
+              [RULE-DVFS-02] GPU Cluster -> APPLY_CAP (65%)
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- VIEW 4: Theorem 1 Arbitrage Gate & Triangulation Canary -->
+  <main class="view-panel" id="view-arbitrage">
+    <div class="dashboard-grid">
+      <!-- Left Column: Theorem 1 Interactive Gate Calculator -->
+      <section class="left-stage">
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>⚖️ Theorem 1 Economic Arbitrage Gate Calculator</span>
+            </div>
+            <div class="card-badge mono" id="gateVerdictBadge" style="background:rgba(16,185,129,0.15); color:#34d399; border-color:rgba(16,185,129,0.3);">
+              PROFITABLE_ARBITRAGE
+            </div>
+          </div>
+
+          <p style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 1.25rem;">
+            Formal mathematical gating guaranteeing zero-capital-destruction invariant under round-trip loss ($\eta_{rt}$), physical LFP degradation ($C_{deg}$), and stochastic risk premium ($\epsilon_{risk}$).
+          </p>
+
+          <div class="gauge-grid" style="margin-bottom: 1.25rem;">
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Charging Tariff (λ_ch)</span>
+              <input type="range" class="range-input" id="gateChSlider" min="0.5" max="3.0" step="0.05" value="1.20">
+              <span class="telemetry-tile-val mono emerald" id="gateChVal">₺1.20/kWh</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Discharge Tariff (λ_dis)</span>
+              <input type="range" class="range-input" id="gateDisSlider" min="1.5" max="7.0" step="0.1" value="4.80">
+              <span class="telemetry-tile-val mono cyan" id="gateDisVal">₺4.80/kWh</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Round-Trip Efficiency (η_rt)</span>
+              <input type="range" class="range-input" id="gateRteSlider" min="0.75" max="0.95" step="0.01" value="0.88">
+              <span class="telemetry-tile-val mono" id="gateRteVal">88.0%</span>
+            </div>
+            <div class="telemetry-tile">
+              <span class="telemetry-tile-label">Degradation Cost (C_deg)</span>
+              <input type="range" class="range-input" id="gateDegSlider" min="0.10" max="0.80" step="0.05" value="0.35">
+              <span class="telemetry-tile-val mono" id="gateDegVal">₺0.35/kWh</span>
+            </div>
+          </div>
+
+          <!-- Mathematical Equation Breakdown -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem;">
+            <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">Theorem 1 Economic Equation</div>
+            <div class="mono" style="font-size: 0.8rem; color: #f1f5f9; line-height: 1.8;">
+              <div>• Effective Break-Even Charge Cost: <strong class="mono" id="gateBreakEven" style="color:#fbbf24;">₺1.364 / kWh</strong></div>
+              <div>• Effective Delivered Degradation: <strong class="mono" id="gateEffDeg" style="color:#fbbf24;">₺0.373 / kWh</strong></div>
+              <div>• Minimum Required Discharge Price: <strong class="mono" id="gateMinReq" style="color:#f43f5e;">₺1.787 / kWh</strong></div>
+              <div style="border-top: 1px solid var(--border-subtle); margin-top: 0.5rem; padding-top: 0.5rem;">
+                • Net Risk-Adjusted Arbitrage Margin: <strong class="mono" id="gateNetMargin" style="color:#34d399; font-size: 1.05rem;">+₺3.013 / kWh</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Byzantine Triangulation Canary -->
+      <section class="side-stack">
+        <div class="cockpit-card">
+          <div class="card-header">
+            <div class="card-title">🐤 Triangulation Canary (2-of-3 Quorum)</div>
+            <div class="card-badge mono" id="canaryStatusBadge" style="background:rgba(16,185,129,0.15); color:#34d399; border-color:rgba(16,185,129,0.3);">
+              CONSENSUS_VALID
+            </div>
+          </div>
+
+          <p style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 1rem;">
+            Byzantine fault tolerance preventing price-poisoning attacks and false demand response triggers across 3 independent feeds.
+          </p>
+
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div>
+              <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">1. EPIAŞ Primary API (TL/MWh)</label>
+              <input type="number" id="inpEpiasPrice" value="2450.0" class="mono cfg-input" style="width: 100%; margin-top: 0.2rem;">
+            </div>
+            <div>
+              <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">2. TEİAŞ Secondary Telemetry (TL/MWh)</label>
+              <input type="number" id="inpTeiasPrice" value="2400.0" class="mono cfg-input" style="width: 100%; margin-top: 0.2rem;">
+            </div>
+            <div>
+              <label style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">3. Regional ENTSO-E Corroborator (TL/MWh)</label>
+              <input type="number" id="inpRegionalPrice" value="2380.0" class="mono cfg-input" style="width: 100%; margin-top: 0.2rem;">
+            </div>
+          </div>
+
+          <button class="btn-action btn-emerald" id="btnTestCanary" style="width: 100%; justify-content: center; margin-top: 1rem;">
+            ⚡ Verify 2-of-3 Quorum Consensus
+          </button>
+
+          <div id="canaryResultBox" style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-size: 0.76rem; color: var(--text-secondary);">
+            Consensus Price: <strong class="mono emerald" id="canaryConsensusVal">₺2,410.00 / MWh (2.410 ₺/kWh)</strong>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Modal for W3C VC JSON-LD -->
+  <div class="modal-backdrop" id="vcModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 style="font-size: 1rem; color: #ffffff;">W3C Verifiable Credential v2.0 (IPMVP 10-in-10)</h3>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn-action btn-emerald" id="btnDownloadVc" style="padding: 0.25rem 0.65rem; font-size: 0.72rem;">
+            📥 Download .jsonld
+          </button>
+          <button class="btn-action" id="btnCloseModal" style="padding: 0.2rem 0.5rem;">✕</button>
+        </div>
+      </div>
+      <pre class="json-view mono" id="vcJsonView">Loading credential...</pre>
+    </div>
+  </div>
+
+  <!-- Modal for Competitor Moat Matrix -->
+  <div class="modal-backdrop" id="moatModal">
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <div>
+          <h3 style="font-size: 1.1rem; color: #ffffff;">🏆 Fleksa vs Global Competitors: 10-Dimension Moat Matrix</h3>
+          <p style="font-size: 0.72rem; color: var(--text-muted);">Empirical Market &amp; Architectural Benchmark (2026 State-of-the-Art)</p>
+        </div>
+        <button class="btn-action" id="btnCloseMoatModal" style="padding: 0.2rem 0.5rem;">✕</button>
+      </div>
+
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>Dimension</th>
+            <th>Fleksa Engine</th>
+            <th>Tesla Autobidder</th>
+            <th>Fluence OS (Siemens)</th>
+            <th>Voltus / CPower</th>
+            <th>Sympower</th>
+            <th>Google / MS DC Flex</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Target Assets</strong></td>
+            <td class="highlight-fleksa">AI Data Centers + Hybrid BESS</td>
+            <td>Megapack Only</td>
+            <td>Utility BESS Santralleri</td>
+            <td>Fabrika, HVAC, Jeneratör</td>
+            <td>Hidro, Sanayi, RES</td>
+            <td>Kendi Bulut Kümeleri</td>
+          </tr>
+          <tr>
+            <td><strong>Response Time</strong></td>
+            <td class="highlight-fleksa">&lt; 28 ms (NVML DVFS)</td>
+            <td>200 ms – 1 s</td>
+            <td>1 s – 5 s</td>
+            <td>15 dk – 2 saat</td>
+            <td>1 s – 4 s</td>
+            <td>5 dk – 30 dk</td>
+          </tr>
+          <tr>
+            <td><strong>GPU Workload Awareness</strong></td>
+            <td class="highlight-fleksa">YES (Speculative K + KV-safe)</td>
+            <td>NO (0 IT awareness)</td>
+            <td>NO (0 IT awareness)</td>
+            <td>NO (0 IT awareness)</td>
+            <td>NO (0 IT awareness)</td>
+            <td>YES (Dahili Borg/K8s)</td>
+          </tr>
+          <tr>
+            <td><strong>SLA &amp; QoS Guarantees</strong></td>
+            <td class="highlight-fleksa">100% Type-Safe Queue Cap</td>
+            <td>N/A (No workloads)</td>
+            <td>N/A (No workloads)</td>
+            <td>Yok (Ceza riski)</td>
+            <td>Yok</td>
+            <td>Dahili SLA</td>
+          </tr>
+          <tr>
+            <td><strong>Battery Physics Model</strong></td>
+            <td class="highlight-fleksa">2-RC Thevenin + Wang/Ecker Fade</td>
+            <td>Proprietary Black-box</td>
+            <td>Empirik BMS Telemetrisi</td>
+            <td>Yok (Harici BMS)</td>
+            <td>Temel SoC% Takibi</td>
+            <td>Temel Telemetri</td>
+          </tr>
+          <tr>
+            <td><strong>Safety Policy DSL</strong></td>
+            <td class="highlight-fleksa">Ed25519 AST Flex-Policy v2</td>
+            <td>Kapalı Bulut Konfigürasyonu</td>
+            <td>SCADA Kural Seti</td>
+            <td>Kağıt Sözleşme / SMS</td>
+            <td>SCADA Kuralları</td>
+            <td>Dahili IAM İlkeleri</td>
+          </tr>
+          <tr>
+            <td><strong>Settlement Attestation</strong></td>
+            <td class="highlight-fleksa">W3C VC v2.0 + Merkle Tree</td>
+            <td>Aylık PDF Raporları</td>
+            <td>Aylık PDF / Sayaç</td>
+            <td>Manuel Excel Faturaları</td>
+            <td>TSO Sayaç Günlüğü</td>
+            <td>Dahili Muhasebe</td>
+          </tr>
+          <tr>
+            <td><strong>M&amp;V Standard</strong></td>
+            <td class="highlight-fleksa">IPMVP Option B + ASHRAE 14</td>
+            <td>Özel Metroloji</td>
+            <td>TSO Metodolojisi</td>
+            <td>Statik 10-in-10</td>
+            <td>TSO Metodolojisi</td>
+            <td>Dahili Metrikler</td>
+          </tr>
+          <tr>
+            <td><strong>Optimization Engine</strong></td>
+            <td class="highlight-fleksa">C++ HiGHS MILP Rolling Horizon</td>
+            <td>Stokastik Dinamik Prog.</td>
+            <td>Hibrit LP/QP Heuristik</td>
+            <td>Kural Tabanlı Sezgisel</td>
+            <td>Hibrit LP/QP</td>
+            <td>Tescilli Heuristik</td>
+          </tr>
+          <tr>
+            <td><strong>Hardware Lock-in &amp; Pazar</strong></td>
+            <td class="highlight-fleksa">SIFIR (B2B Bağımsız Egemen)</td>
+            <td>Yüksek (Sadece Tesla)</td>
+            <td>Yüksek (Siemens/AES Ekosistemi)</td>
+            <td>Orta (Tescilli RTU)</td>
+            <td>Orta (SCADA Ağ Geçidi)</td>
+            <td>MUTLAK (Dışarıya Satılmaz)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
