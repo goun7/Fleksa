@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test & coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Fleksa runtime artifacts
+*.db
+*.sqlite3
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store/

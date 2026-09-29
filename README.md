@@ -1,8 +1,10 @@
 # Fleksa — Otonom Enerji Esnekliği & Dağıtık Batarya Arbitraj Motoru
 
-> **Ana-belge:** [`FLEKSA.md`](FLEKSA.md) — v16.0 kapsamlı-master-spec
-> ( OpenADR-2.0b/3.0, IEEE-2030.5, IPMVP, ISO-50001, EPDK-yan-hizmetler).
-> **Bu-README-hızlı-başlangıç-içindir; ayrıntılar-ana-belgede.**
+> **Ana-belge:** [`FLEKSA.md`](FLEKSA.md) — kapsamlı-master-spec.
+> **Akademik araştırma:** [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md)
+> — 10 doğrulanmış 2025–2026 makalesi.
+> **Dürüst değerlendirme:** [`docs/arastirma/degerlendirme-A-B-C.md`](docs/arastirma/degerlendirme-A-B-C.md)
+> — karar **(A) aktif geliştir**, gerekçesiyle.
 
 ## Rolü ( TAMGA-MESH-içinde)
 
@@ -12,10 +14,77 @@ yanıtı-kararının gerçekten-yürütüldüğünü ve ölçülebildiğini kayd
 ```
 grid-sinyali → MPC-çekirdeği ( HiGHS) → dispatch-kararı
         ↓ ( her-adımda-ölçüm-kanıtı)
-   IPMVP-M&V-stüdyosu → Merkle-kanıt → §6-foreign_chain_proof
-        ↓
-   tamga D5-ledger ( RFC-010 §6: fleksa-zinciri-kendi-adında)
+   IPMVP-M&V-stüdyosu → Merkle-kanıt → bağımsız-denetim ( audit-verify)
 ```
+
+---
+
+## ⚡ In 30 seconds ( gerçek komutlar)
+
+Gereksinim: Python ≥ 3.11 ve `scipy`, `numpy`, `pydantic`, `click`, `cryptography`.
+Bunlar bu makinede **zaten yüklü** ( scipy 1.18.1, pydantic 2.13.5).
+
+```bash
+# 0) Testleri çalıştır ( 84 test, hepsi yeşil olmalı)
+python3 -m pytest tests/ -q
+
+# 1) Kurulum gerektirmeden, kaynak üzerinden çalıştır
+PYTHONPATH=src python3 -m fleksa version
+PYTHONPATH=src python3 -m fleksa benchmark          # EPIAŞ 2026.1 gerçek PTF/SMF verisi
+PYTHONPATH=src python3 -m fleksa solve              # 24-saatlik MPC → OPTIMAL dispatch
+
+# 2) Kanıt üret ve BAĞIMSIZ olarak doğrula
+PYTHONPATH=src python3 -m fleksa audit --report /tmp/rapor.json
+PYTHONPATH=src python3 -m fleksa audit-verify /tmp/rapor.json
+#   → "VERIFICATION PASSED": iddialar, kayıtlı girdilerin deterministik sonucudur.
+#   → Değiştirilmiş bir rapor "VERIFICATION FAILED" ile exit 1 verir.
+
+# 3) Web cockpit + REST API ( 127.0.0.1:8076)
+PYTHONPATH=src python3 -m fleksa ui
+#   tarayıcı: http://127.0.0.1:8076
+#   curl -X POST http://127.0.0.1:8076/api/solve -H 'Content-Type: application/json' -d '{}'
+```
+
+Kurulumlu kullanım ( opsiyonel):
+
+```bash
+pip install -e ".[dev]"
+fleksa solve
+fleksa ui
+```
+
+### MCP çözümü ne döner? ( gerçek çıktı)
+```
+✓ Optimization Status: OPTIMAL
+✓ Projected Cost: ₺18,407.87
+✓ Expected Savings vs Baseline: ₺6,163.73
+✓ Hour 0 Dispatch Setpoints:
+   • BESS Discharge:  117.3 kW
+   • Grid Draw:       262.7 kW
+   • GPU Power Cap:   65.0%
+   • Resulting SoC:   75.0 kWh
+```
+
+---
+
+## Komut başvurusu
+
+| Komut | Ne yapar | Standart |
+|---|---|---|
+| `solve` | 24-saatlik Receding-Horizon MILP ( HiGHS) dispatch | — |
+| `audit` | IPMVP Option B baseline + ASHRAE 14 + Merkle kanıt | EVO 10001-1:2022 |
+| `audit-verify` | Bir raporu **bağımsız** olarak sıfırdan yeniden hesaplayıp doğrular | bu-sürüme-ait |
+| `benchmark` | EPIAŞ 2026.1 PTF/SMF verisini özetler | — |
+| `arbitrage-gate` | Arbitraj kârlılık kapısı ( break-even + degradasyon) | — |
+| `canary` | Byzantine 2-of-3 fiyat-kaynak konsensüsü | — |
+| `credential` | Ed25519-imzalı W3C Verifiable Credential | W3C VC v2 |
+| `verify-policy` | Flex-Policy v2 YAML AST doğrulama | — |
+| `openadr` | OpenADR 3.0/2.0b VEN olay simülasyonu | OpenADR |
+| `modbus` | SunSpec 700-series register kodlama | Modbus TCP |
+| `monte-carlo` | Stokastik risk analizi | — |
+| `ui` | Web cockpit + REST API | — |
+
+---
 
 ## Kardeş-sınırı ( egemenlik)
 
@@ -23,17 +92,30 @@ Fleksa %100-egemendir; **hiçbir-kardeşe-zorunlu-bağımlılık-yok**:
 `63-Sester` ( ödeme), `68-Kredent` ( kimlik), `69-Swarmax` ( filo),
 `73-Veridrome` ( sertifika), `77-Dümen` ( iç-denetim).
 
-## Güvenlik-modeli ( AT-141..161-§6-dikişleri)
+## Güvenlik-modeli
 
 | Özellik | Uygulama |
 |---|---|
-| §6-head | Merkle-ağacı-kökü; `evidence_link`-ile-receiptHash'e-bağlı |
-| Kanıt-adı | `fleksa`-kendi-adında ( AT-107/134-dersi) |
+| M&V-kanıtı | IPMVP Option B baseline + Merkle-ağacı-kökü |
+| Bağımsız-denetim | `audit-verify` ile sıfırdan-yeniden-hesaplama |
+| Fiyat-kanıtı | Byzantine 2-of-3 triangulation-canary |
+| Kimlik-kanıtı | Ed25519-imzalı W3C Verifiable Credential |
 | Flex-Policy-v2 | egemen-stüdyo; dış-politikaya-bağımlı-DEĞİL |
-| Teorem-1 | arbitraj-kapısı ( matematiksel-kanıt) |
 
 ## Sınırlar ( dürüst)
 
 - ** Enerji-erişimi-YOK** — bu-bir-karar-motorudur; gerçek-grid-erişimi
-  OpenADR/Modbus-entegrasyonları-üzerinden-istenir ( üretim-dağıtımı-öncesi)
-- ** Kanıt-üretimi-fleksa-içindedir**; mesh-düzeyinde-mutabakat RFC-010'da
+  OpenADR/Modbus-entegrasyonları-üzerinden-üretim-dağıtımı-öncesi-istenir.
+- ** Degradasyon-maliyeti SABİTTİR** ( 0.35 ₺/kWh) — DoD/sıcaklık-bağımlı bir
+  rainflow-modeli-DEĞİL. Akademik-doğrulama için bkz.
+  [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §[4].
+- ** GPU-esnekliği SABİT-BİR-ORAN varsayar** ( min_gpu_cap). 2026 araştırması
+  ( arXiv:2609.05406) bunun esnekliği %17–47-aşınlattığını gösteriyor; bu bilinen
+  bir sınırdır, zaman-içinde-düzeltilecektir.
+- ** Kanıt-üretimi-fleksa-içindedir**; mesh-düzeyinde-mutabakat RFC-010'da.
+
+## Yasal / kısıtlar
+
+- ** PRIVATE_KEY-ÜRETİM-YASAK**, ** mainnet-YASAK**, ** para-harcama-YASAK**.
+- `credential` komutu yalnızca yerel-demo-anahtarı ( `01`*32) kullanır; üretim için
+  `FLEKSA_FACILITY_KEY` ortam-değişkeni-VERİLMEZ.

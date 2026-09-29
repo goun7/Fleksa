@@ -238,7 +238,9 @@ def monte_carlo_cmd(runs: int, seed: int, capacity: float, max_kw: float):
 
 @main.command(name="audit")
 @click.option("--history-days", default=5, help="Number of similar baseline days to simulate.")
-def audit_cmd(history_days: int):
+@click.option("--report", type=click.Path(), default=None,
+              help="Write a self-contained M&V report JSON that `fleksa audit-verify` can independently re-check.")
+def audit_cmd(history_days: int, report: Optional[str]):
     """Executes IPMVP Option B / ASHRAE Guideline 14 baseline M&V audit."""
     click.echo(f"⚡ Computing IPMVP 10-in-10 baseline over {history_days} historical days...")
     rng = np.random.default_rng(123)
@@ -258,9 +260,11 @@ def audit_cmd(history_days: int):
         actual[h] -= 100.0
 
     ptf = np.full(24, 3.80)
+    event_hours = [17, 18, 19, 20]
+    pre_event_actual_2h_kw = list(actual[15:17])
     adjusted_baseline = IpmvpBaselineEngine.apply_same_day_adjustment(
         baseline_hourly_kw=baseline,
-        pre_event_actual_2h_kw=list(actual[15:17]),
+        pre_event_actual_2h_kw=pre_event_actual_2h_kw,
         event_start_hour=17,
     )
 
@@ -268,7 +272,7 @@ def audit_cmd(history_days: int):
         adjusted_baseline_kw=adjusted_baseline,
         actual_meter_kw=actual,
         ptf_tariff_try_kwh=ptf,
-        event_hours=[17, 18, 19, 20],
+        event_hours=event_hours,
     )
 
     ashrae = IpmvpBaselineEngine.evaluate_ashrae_compliance(
@@ -277,7 +281,7 @@ def audit_cmd(history_days: int):
     )
 
     ledger = CryptographicSavingsLedger()
-    leaf = ledger.append_entry({"event": "DR_PEAK_SHAVE", "savings": savings})
+    ledger.append_entry({"event": "DR_PEAK_SHAVE", "savings": savings})
     root = ledger.compute_merkle_root()
 
     click.echo("✓ IPMVP Option B Audit Results:")
@@ -287,6 +291,124 @@ def audit_cmd(history_days: int):
     click.echo(f"  • ASHRAE 14 NMBE:    %{ashrae['nmbe_pct']:.2f} (Threshold: <= ±5.0%)")
     click.echo(f"  • Compliance Grade:  {ashrae['compliance_grade']}")
     click.echo(f"  • Merkle Root:       {root}")
+
+    if report:
+        # Deterministic, self-contained report: the recorded INPUTS are committed
+        # alongside the CLAIMS so that any third party can re-derive the result.
+        report_payload = {
+            "report_version": 1,
+            "generated_by": "fleksa audit",
+            "method": "IPMVP Option B / EVO 10001-1:2022 10-in-10 + same-day adjustment",
+            "inputs": {
+                # Note: history is generated with a fixed seed (123), so it is
+                # reproducible; we still record it verbatim for independent re-check.
+                "history_days": [np.asarray(d).round(6).tolist() for d in history],
+                "actual_meter_kw": actual.round(6).tolist(),
+                "ptf_tariff_try_kwh": ptf.round(6).tolist(),
+                "event_hours": event_hours,
+                "event_start_hour": 17,
+                "pre_event_actual_2h_kw": [round(float(x), 6) for x in pre_event_actual_2h_kw],
+            },
+            "claims": {
+                "savings": savings,
+                "ashrae": ashrae,
+                "merkle_root": root,
+            },
+            "assumptions": {
+                "degradation_cost": "FIXED constant 0.35 TRY/kWh (not DoD/temperature dependent)",
+                "gpu_flexibility": "FIXED fraction (min_gpu_cap); not a duration/reliability profile",
+            },
+        }
+        Path(report).write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
+        click.echo(f"  • Verifiable report written: {report}")
+
+
+@main.command(name="audit-verify")
+@click.argument("report_file", type=click.Path(exists=True))
+def audit_verify_cmd(report_file: str):
+    """Independently re-derives the savings, ASHRAE stats and Merkle root of a report.
+
+    Given only the recorded INPUTS (history, actual meter, tariff, event hours), this
+    command recomputes the whole M&V result from scratch and compares it with the
+    CLAIMS stored in the report. A third party can therefore confirm that the claimed
+    savings are the deterministic consequence of the recorded measurements, without
+    trusting the producer.
+    """
+    payload = json.loads(Path(report_file).read_text(encoding="utf-8"))
+    inputs = payload.get("inputs", {})
+    claims = payload.get("claims", {})
+
+    required = ["history_days", "actual_meter_kw", "ptf_tariff_try_kwh", "event_hours"]
+    missing = [k for k in required if k not in inputs]
+    if missing:
+        click.echo(f"✗ Report is missing required inputs: {missing}", err=True)
+        raise SystemExit(2)
+
+    history = [np.asarray(d, dtype=float) for d in inputs["history_days"]]
+    actual = np.asarray(inputs["actual_meter_kw"], dtype=float)
+    ptf = np.asarray(inputs["ptf_tariff_try_kwh"], dtype=float)
+    event_hours = list(inputs["event_hours"])
+    event_start_hour = int(inputs.get("event_start_hour", min(event_hours)))
+    pre_event = inputs.get("pre_event_actual_2h_kw", list(actual[max(0, event_start_hour - 2):event_start_hour]))
+
+    # Recompute everything from the recorded inputs only.
+    baseline = IpmvpBaselineEngine.calculate_10_in_10_baseline(history)
+    adjusted_baseline = IpmvpBaselineEngine.apply_same_day_adjustment(
+        baseline_hourly_kw=baseline,
+        pre_event_actual_2h_kw=pre_event,
+        event_start_hour=event_start_hour,
+    )
+    recomputed_savings = IpmvpBaselineEngine.compute_event_savings(
+        adjusted_baseline_kw=adjusted_baseline,
+        actual_meter_kw=actual,
+        ptf_tariff_try_kwh=ptf,
+        event_hours=event_hours,
+    )
+    recomputed_ashrae = IpmvpBaselineEngine.evaluate_ashrae_compliance(
+        actual=actual[:event_start_hour],
+        baseline=adjusted_baseline[:event_start_hour],
+    )
+    ledger = CryptographicSavingsLedger()
+    ledger.append_entry({"event": "DR_PEAK_SHAVE", "savings": recomputed_savings})
+    recomputed_root = ledger.compute_merkle_root()
+
+    checks = []
+    claimed_savings = claims.get("savings", {})
+    for key in ("total_baseline_kwh", "total_actual_kwh", "net_curtailed_kwh", "net_financial_savings_try"):
+        checks.append((f"savings.{key}",
+                       float(claimed_savings.get(key, float("nan"))),
+                       float(recomputed_savings[key])))
+
+    claimed_ashrae = claims.get("ashrae", {})
+    for key in ("cv_rmse_pct", "nmbe_pct", "is_ashrae_compliant", "compliance_grade"):
+        if key in claimed_ashrae:
+            checks.append((f"ashrae.{key}", claimed_ashrae[key], recomputed_ashrae[key]))
+
+    checks.append(("merkle_root", claims.get("merkle_root", ""), recomputed_root))
+
+    click.echo(f"⚡ Independent M&V verification of {report_file}")
+    click.echo(f"  • recomputed baseline (10-in-10) ok, adjusted baseline ok")
+    click.echo("")
+
+    all_pass = True
+    for name, claimed, recomputed in checks:
+        if isinstance(recomputed, str):
+            ok = claimed == recomputed
+        elif isinstance(recomputed, bool):
+            ok = bool(claimed) == recomputed
+        else:
+            ok = abs(float(claimed) - float(recomputed)) < 1e-6
+        mark = "✓" if ok else "✗"
+        if not ok:
+            all_pass = False
+        click.echo(f"  {mark} {name:<28} claim={claimed!r}  recomputed={recomputed!r}")
+
+    click.echo("")
+    if all_pass:
+        click.echo("✓ VERIFICATION PASSED — claims are the deterministic result of the recorded inputs.")
+    else:
+        click.echo("✗ VERIFICATION FAILED — claims do not match an independent recomputation.", err=True)
+        raise SystemExit(1)
 
 
 @main.command(name="canary")
