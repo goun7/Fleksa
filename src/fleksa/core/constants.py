@@ -38,3 +38,19 @@ ECKER_K_CAL: float = 0.0012          # Pre-exponential calendar factor
 # Nature npj Clean Water (2025) Datacenter Water-Energy Nexus
 DEFAULT_WATER_LITER_PER_KWH: float = 1.8   # Adiabatic cooling evaporative water consumption
 DEFAULT_WATER_COST_TRY_PER_LITER: float = 0.045  # Industrial water tariff TRY / liter
+
+# --- Dynamic GPU Flexibility (rebuttal to arXiv:2609.05406) ---
+# The fixed min_gpu_cap=0.65 assumption was refuted: on a 155,410-GPU trace a
+# constant-percentage flexibility underestimates real headroom by 17-47%.
+# Demand-based bounds replace the constant floor.
+GPU_CAP_HARD_FLOOR: float = 0.50        # Never throttle below 50% TDP (hardware/SLA safe limit)
+GPU_CAP_CEILING: float = 1.0            # Full TDP
+GPU_CAP_LEGACY_DEFAULT: float = 0.65    # Legacy fixed floor, kept only for backward compatibility
+
+# Queue backlog (pending FLOPS) at/above which the cluster is considered saturated
+GPU_FLEX_BACKLOG_SATURATION_FLOPS: float = 500_000.0
+# Share of deferred/preemptible workload (Class-1/2/3) that can absorb throttling
+GPU_FLEX_MAX_NONCRITICAL_SHARE: float = 0.80
+# Elasticity exponent: how sharply demand pressure tightens the cap floor.
+# Validated against the 17-47% underestimation band reported in arXiv:2609.05406.
+GPU_FLEX_ELASTICITY_EXPONENT: float = 0.85

@@ -108,10 +108,12 @@ Fleksa %100-egemendir; **hiçbir-kardeşe-zorunlu-bağımlılık-yok**:
   OpenADR/Modbus-entegrasyonları-üzerinden-üretim-dağıtımı-öncesi-istenir.
 - ** Degradasyon-maliyeti SABİTTİR** ( 0.35 ₺/kWh) — DoD/sıcaklık-bağımlı bir
   rainflow-modeli-DEĞİL. Akademik-doğrulama için bkz.
-  [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §[4].
-- ** GPU-esnekliği SABİT-BİR-ORAN varsayar** ( min_gpu_cap). 2026 araştırması
-  ( arXiv:2609.05406) bunun esnekliği %17–47-aşınlattığını gösteriyor; bu bilinen
-  bir sınırdır, zaman-içinde-düzeltilecektir.
+  [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §[2.7]/[18].
+- ** GPU-esnekliği artık DİNAMİKTİR** — eski sabit `min_gpu_cap=0.65` varsayımı
+  ( arXiv:2609.05406: %17–47 aşınlatma) talep-temelli saatlik bir alt-sınırla
+  değiştirildi ( `workload/gpu_flexibility.py`). `--gpu-flex=fixed` ile eski sabit yol
+  hâlâ yeniden-oynanabilir. Diğer bilinen-limitler için bkz.
+  [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §4.
 - ** Kanıt-üretimi-fleksa-içindedir**; mesh-düzeyinde-mutabakat RFC-010'da.
 
 ## Yasal / kısıtlar

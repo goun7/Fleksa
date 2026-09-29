@@ -138,6 +138,10 @@ class FleksaAPIHandler(BaseHTTPRequestHandler):
         max_kw = float(payload.get("max_kw", 250.0))
         gpu_cap_min = float(payload.get("gpu_cap_min", 0.50))
         water_cost = float(payload.get("water_cost_per_kwh", 0.0))
+        # Dynamic GPU flexibility (arXiv:2609.05406): 'dynamic' builds a
+        # demand-based per-hour cap floor; 'fixed' keeps the legacy constant.
+        gpu_flex_mode = str(payload.get("gpu_flex_mode", "dynamic"))
+        gpu_queue = float(payload.get("gpu_queue_peak_flops", 750_000.0))
 
         # 2026 real-world benchmark price curve (TL/kWh)
         if BENCHMARK_PATH.exists():
@@ -170,10 +174,26 @@ class FleksaAPIHandler(BaseHTTPRequestHandler):
             ambient_temp_c=temp,
         )
 
+        gpu_flex_profile = None
+        if gpu_flex_mode == "dynamic":
+            from fleksa.workload.gpu_flexibility import (
+                GpuFlexibilityProfiler,
+                GpuDemandSignals,
+            )
+            from fleksa.cli.main import _simulate_gpu_demand
+            profiler = GpuFlexibilityProfiler()
+            backlog, noncrit, sla = _simulate_gpu_demand(24, gpu_queue)
+            gpu_flex_profile = profiler.compute_flexibility_profile(
+                GpuDemandSignals(queue_backlog_flops=backlog,
+                                 noncritical_share=noncrit,
+                                 sla_pressure=sla)
+            )
+
         solver = FleksaMPCSolver(
             state=state,
             horizon_data=horizon,
             min_gpu_cap=gpu_cap_min,
+            gpu_flex_profile=gpu_flex_profile,
             water_cost_per_kwh=water_cost,
         )
         res = solver.solve()
@@ -233,10 +253,16 @@ class FleksaAPIHandler(BaseHTTPRequestHandler):
                 "p_ch_kw": [round(x, 1) for x in res.p_ch_kw],
                 "p_dis_kw": [round(x, 1) for x in res.p_dis_kw],
                 "gpu_power_cap_pct": [round(x * 100, 1) for x in res.gpu_power_cap_pct],
+                "gpu_cap_floor_pct": [round(x * 100, 1) for x in (gpu_flex_profile or [res.metadata.get("gpu_cap_floor_min", gpu_cap_min)] * 24)],
                 "soc_kwh": [round(x, 1) for x in res.soc_trajectory_kwh[:24]],
                 "soc_pct": [round((x / capacity) * 100, 1) for x in res.soc_trajectory_kwh[:24]],
                 "v_term_v": voltages,
                 "cell_temp_c": temps,
+            },
+            "gpu_flexibility": {
+                "mode": res.metadata.get("gpu_flexibility_mode"),
+                "floor_min": round(float(res.metadata.get("gpu_cap_floor_min", gpu_cap_min)), 3),
+                "floor_max": round(float(res.metadata.get("gpu_cap_floor_max", gpu_cap_min)), 3),
             },
             "degradation": {
                 "day_q_loss_pct": round(total_degradation_pct, 4),

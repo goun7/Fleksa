@@ -36,6 +36,7 @@ class FleksaMPCSolver:
         degradation_cost_per_kwh: float = 0.35,
         min_gpu_cap: float = 0.65,
         water_cost_per_kwh: float = 0.0,
+        gpu_flex_profile: Optional[List[float]] = None,
     ):
         self.state = state
         self.data = horizon_data
@@ -46,10 +47,40 @@ class FleksaMPCSolver:
         self.min_gpu_cap = min_gpu_cap
         self.water_cost_per_kwh = water_cost_per_kwh
 
+        # Dynamic GPU flexibility profile (demand-based lower bound per hour).
+        # Rebuttal to arXiv:2609.05406: a *fixed* min_gpu_cap underestimates
+        # real GPU flexibility by 17-47% on a 155,410-GPU trace. When a
+        # demand-based profile is supplied it overrides the constant floor,
+        # hour by hour; without one the legacy constant floor is preserved.
+        self.gpu_flex_profile = self._validate_gpu_flex_profile(gpu_flex_profile)
+
         # Efficiencies
         eta_rt = state.eta_rt or DEFAULT_ROUND_TRIP_EFFICIENCY
         self.eta_ch = float(np.sqrt(eta_rt))
         self.eta_dis = float(np.sqrt(eta_rt))
+
+    def _validate_gpu_flex_profile(
+        self, gpu_flex_profile: Optional[List[float]]
+    ) -> Optional[List[float]]:
+        """Validate a demand-based per-hour GPU cap floor, or return None."""
+        if gpu_flex_profile is None:
+            return None
+        if len(gpu_flex_profile) != self.H:
+            raise ValueError(
+                f"gpu_flex_profile length {len(gpu_flex_profile)} != horizon {self.H}"
+            )
+        for i, cap in enumerate(gpu_flex_profile):
+            if not (0.0 < float(cap) <= 1.0):
+                raise ValueError(
+                    f"gpu_flex_profile[{i}]={cap} out of range (0.0, 1.0]"
+                )
+        return [float(c) for c in gpu_flex_profile]
+
+    def _gpu_cap_floor(self, t: int) -> float:
+        """Hour-t lower bound on the GPU power-cap fraction."""
+        if self.gpu_flex_profile is not None:
+            return self.gpu_flex_profile[t]
+        return self.min_gpu_cap
 
     def solve(self) -> OptimizationResult:
         H = self.H
@@ -101,7 +132,9 @@ class FleksaMPCSolver:
             # 6: kappa_gpu (GPU power cap)
             # Small penalty for throttling GPU (to prefer 1.0 when electricity is cheap)
             c[base_idx + 6] = -1.0 * (float(self.data.ptf_try_kwh[t]) * 0.05)
-            lower_bounds[base_idx + 6] = self.min_gpu_cap
+            # Demand-based floor (dynamic GPU flexibility) replaces the fixed
+            # 0.65 constant — see GpuFlexibilityProfiler (arXiv:2609.05406).
+            lower_bounds[base_idx + 6] = self._gpu_cap_floor(t)
             upper_bounds[base_idx + 6] = 1.0
 
         # Constraints
@@ -212,6 +245,11 @@ class FleksaMPCSolver:
             metadata={
                 "solver": "HiGHS_MILP",
                 "baseline_cost_try": baseline_cost,
+                "gpu_flexibility_mode": "DYNAMIC_DEMAND_BASED"
+                if self.gpu_flex_profile is not None
+                else "LEGACY_FIXED_FLOOR",
+                "gpu_cap_floor_min": min(self._gpu_cap_floor(t) for t in range(H)),
+                "gpu_cap_floor_max": max(self._gpu_cap_floor(t) for t in range(H)),
                 "first_hour_mode": BessMode.CHARGE.value
                 if p_ch_sol[0] > 1.0
                 else (BessMode.DISCHARGE.value if p_dis_sol[0] > 1.0 else BessMode.HOLD.value),
