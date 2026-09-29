@@ -11,6 +11,9 @@ from fleksa.core.constants import (
     DEFAULT_ROUND_TRIP_EFFICIENCY,
     MIN_SAFE_SOC,
     MAX_SAFE_SOC,
+    GPU_CAP_DYNAMIC_MAX,
+    GPU_CAP_DYNAMIC_MIN,
+    GPU_CAP_LEGACY_DEFAULT,
 )
 from fleksa.core.types import (
     FacilityState,
@@ -34,8 +37,10 @@ class FleksaMPCSolver:
         delta_t_hours: float = 1.0,
         gpu_max_kw: float = 200.0,
         degradation_cost_per_kwh: float = 0.35,
-        min_gpu_cap: float = 0.65,
+        min_gpu_cap: float = GPU_CAP_DYNAMIC_MIN,
+        max_gpu_cap: float = GPU_CAP_DYNAMIC_MAX,
         water_cost_per_kwh: float = 0.0,
+        dynamic_gpu_cap: Optional[float] = None,
         gpu_flex_profile: Optional[List[float]] = None,
     ):
         self.state = state
@@ -44,8 +49,37 @@ class FleksaMPCSolver:
         self.dt = delta_t_hours
         self.gpu_max_kw = gpu_max_kw
         self.c_deg = degradation_cost_per_kwh
-        self.min_gpu_cap = min_gpu_cap
         self.water_cost_per_kwh = water_cost_per_kwh
+
+        # Dynamic GPU flexibility *range* (2nd-wave rebuttal, 2026):
+        # arXiv:2609.27926 ("Joule Point") — energy-per-inference is U-shaped
+        # in the power cap and the optimum is workload-dependent (~43-46% of
+        # peak on large GPUs), so a single fixed floor cannot be optimal.
+        # arXiv:2608.07971 ("ElastiCo") — static partitions underutilize the
+        # fleet. arXiv:2609.16682 ("DeepShare") — assurance must be a
+        # continuous, demand-driven signal, not a fixed quota.
+        if not (0.0 < min_gpu_cap < max_gpu_cap <= 1.0):
+            raise ValueError(
+                f"FleksaMPCSolver: require 0 < min_gpu_cap < max_gpu_cap <= 1, "
+                f"got min_gpu_cap={min_gpu_cap}, max_gpu_cap={max_gpu_cap}"
+            )
+        self.min_gpu_cap = min_gpu_cap
+        self.max_gpu_cap = max_gpu_cap
+
+        # Workload-selected cap from the dynamic range (DeepShare-style
+        # continuous assurance signal). Becomes the per-hour floor when no
+        # finer-grained demand profile is supplied. Must lie inside
+        # [min_gpu_cap, max_gpu_cap]; a value outside the range is rejected.
+        if dynamic_gpu_cap is not None:
+            d = float(dynamic_gpu_cap)
+            if not (min_gpu_cap <= d <= max_gpu_cap):
+                raise ValueError(
+                    f"FleksaMPCSolver: dynamic_gpu_cap={d} outside the dynamic "
+                    f"range [{min_gpu_cap}, {max_gpu_cap}]"
+                )
+            self.dynamic_gpu_cap: Optional[float] = d
+        else:
+            self.dynamic_gpu_cap = None
 
         # Dynamic GPU flexibility profile (demand-based lower bound per hour).
         # Rebuttal to arXiv:2609.05406: a *fixed* min_gpu_cap underestimates
@@ -58,6 +92,36 @@ class FleksaMPCSolver:
         eta_rt = state.eta_rt or DEFAULT_ROUND_TRIP_EFFICIENCY
         self.eta_ch = float(np.sqrt(eta_rt))
         self.eta_dis = float(np.sqrt(eta_rt))
+
+    @staticmethod
+    def select_dynamic_gpu_cap(
+        workload: float,
+        min_gpu_cap: float = GPU_CAP_DYNAMIC_MIN,
+        max_gpu_cap: float = GPU_CAP_DYNAMIC_MAX,
+    ) -> float:
+        """
+        Select a GPU power-cap floor from the dynamic range from a workload signal.
+
+        ``workload`` is a normalized demand/assurance signal in [0.0, 1.0]
+        (DeepShare's continuous assurance signal): 0.0 = idle cluster with
+        maximum throttling headroom, 1.0 = saturated cluster that cannot be
+        throttled without breaking SLAs. The selected cap rises linearly
+        inside [min_gpu_cap, max_gpu_cap] — high workload drives the floor
+        toward the top of the range (Joule Point: the energy optimum is
+        workload-dependent and sits near 43-46%, inside this range).
+        """
+        if not (0.0 <= workload <= 1.0):
+            raise ValueError(
+                f"FleksaMPCSolver.select_dynamic_gpu_cap: workload must be in "
+                f"[0, 1], got {workload}"
+            )
+        if not (0.0 < min_gpu_cap < max_gpu_cap <= 1.0):
+            raise ValueError(
+                "FleksaMPCSolver.select_dynamic_gpu_cap: require "
+                f"0 < min_gpu_cap < max_gpu_cap <= 1, got "
+                f"min_gpu_cap={min_gpu_cap}, max_gpu_cap={max_gpu_cap}"
+            )
+        return float(min_gpu_cap + (max_gpu_cap - min_gpu_cap) * float(workload))
 
     def _validate_gpu_flex_profile(
         self, gpu_flex_profile: Optional[List[float]]
@@ -77,10 +141,24 @@ class FleksaMPCSolver:
         return [float(c) for c in gpu_flex_profile]
 
     def _gpu_cap_floor(self, t: int) -> float:
-        """Hour-t lower bound on the GPU power-cap fraction."""
+        """
+        Hour-t lower bound on the GPU power-cap fraction.
+
+        Precedence (highest first):
+        1. ``gpu_flex_profile[t]``     — demand-based per-hour profile (arXiv:2609.05406)
+        2. ``dynamic_gpu_cap``         — workload-selected cap from the dynamic
+                                         range [min_gpu_cap, max_gpu_cap]
+                                         (arXiv:2609.27926 / 2608.07971 / 2609.16682)
+        3. ``GPU_CAP_LEGACY_DEFAULT``  — legacy fixed floor (0.65) — the
+                                         *default* path stays bit-for-bit
+                                         backward compatible when neither of
+                                         the dynamic inputs is supplied
+        """
         if self.gpu_flex_profile is not None:
             return self.gpu_flex_profile[t]
-        return self.min_gpu_cap
+        if self.dynamic_gpu_cap is not None:
+            return self.dynamic_gpu_cap
+        return GPU_CAP_LEGACY_DEFAULT
 
     def solve(self) -> OptimizationResult:
         H = self.H
@@ -132,8 +210,10 @@ class FleksaMPCSolver:
             # 6: kappa_gpu (GPU power cap)
             # Small penalty for throttling GPU (to prefer 1.0 when electricity is cheap)
             c[base_idx + 6] = -1.0 * (float(self.data.ptf_try_kwh[t]) * 0.05)
-            # Demand-based floor (dynamic GPU flexibility) replaces the fixed
-            # 0.65 constant — see GpuFlexibilityProfiler (arXiv:2609.05406).
+            # Lower bound on the GPU power cap: demand-based profile
+            # (arXiv:2609.05406) > workload-selected cap from the dynamic
+            # range (arXiv:2609.27926 / 2608.07971 / 2609.16682) > legacy fixed
+            # 0.65 floor (backward-compatible default). See _gpu_cap_floor().
             lower_bounds[base_idx + 6] = self._gpu_cap_floor(t)
             upper_bounds[base_idx + 6] = 1.0
 
@@ -245,11 +325,14 @@ class FleksaMPCSolver:
             metadata={
                 "solver": "HiGHS_MILP",
                 "baseline_cost_try": baseline_cost,
-                "gpu_flexibility_mode": "DYNAMIC_DEMAND_BASED"
-                if self.gpu_flex_profile is not None
-                else "LEGACY_FIXED_FLOOR",
+                "gpu_flexibility_mode":
+                    "DYNAMIC_DEMAND_BASED"
+                    if self.gpu_flex_profile is not None
+                    else ("DYNAMIC_RANGE" if self.dynamic_gpu_cap is not None
+                          else "LEGACY_FIXED_FLOOR"),
                 "gpu_cap_floor_min": min(self._gpu_cap_floor(t) for t in range(H)),
                 "gpu_cap_floor_max": max(self._gpu_cap_floor(t) for t in range(H)),
+                "gpu_cap_dynamic_range": [self.min_gpu_cap, self.max_gpu_cap],
                 "first_hour_mode": BessMode.CHARGE.value
                 if p_ch_sol[0] > 1.0
                 else (BessMode.DISCHARGE.value if p_dis_sol[0] > 1.0 else BessMode.HOLD.value),

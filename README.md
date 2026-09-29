@@ -25,7 +25,7 @@ Gereksinim: Python ≥ 3.11 ve `scipy`, `numpy`, `pydantic`, `click`, `cryptogra
 Bunlar bu makinede **zaten yüklü** ( scipy 1.18.1, pydantic 2.13.5).
 
 ```bash
-# 0) Testleri çalıştır ( 84 test, hepsi yeşil olmalı)
+# 0) Testleri çalıştır ( 171 test, hepsi yeşil olmalı)
 python3 -m pytest tests/ -q
 
 # 1) Kurulum gerektirmeden, kaynak üzerinden çalıştır
@@ -109,10 +109,23 @@ Fleksa %100-egemendir; **hiçbir-kardeşe-zorunlu-bağımlılık-yok**:
 - ** Degradasyon-maliyeti SABİTTİR** ( 0.35 ₺/kWh) — DoD/sıcaklık-bağımlı bir
   rainflow-modeli-DEĞİL. Akademik-doğrulama için bkz.
   [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §[2.7]/[18].
-- ** GPU-esnekliği artık DİNAMİKTİR** — eski sabit `min_gpu_cap=0.65` varsayımı
-  ( arXiv:2609.05406: %17–47 aşınlatma) talep-temelli saatlik bir alt-sınırla
-  değiştirildi ( `workload/gpu_flexibility.py`). `--gpu-flex=fixed` ile eski sabit yol
-  hâlâ yeniden-oynanabilir. Diğer bilinen-limitler için bkz.
+- ** GPU-esnekliği DİNAMİK ARALIKTIR** — eski sabit `min_gpu_cap=0.65` eşiği
+  **2026 akademik çalışmalarıyla geçersiz kılındı**:
+  arXiv:2609.27926 *"Joule Point"* ( inference-başına-enerji U-şekillidir ve
+  optimum **iş yüküne göre değişir** — büyük GPU'larda tepe-gücün %43-46'sı;
+  "yüksek utilization = verimli" **yanlıştır**), arXiv:2608.07971 *"ElastiCo"*
+  ( statik ayrımlar underutilization yaratır) ve arXiv:2609.16682
+  *"DeepShare"* ( assurance sabit kota değil, sürekli talep-temelli sinyal —
+  %70.58 utilization, −%46 gecikme).
+  Alt-sınır artık **dinamik esneklik aralığından** iş yüküne göre seçilir:
+  `[min_gpu_cap=0.35, max_gpu_cap=0.95]` ( Joule Point'in %43-46 optimum
+  bandını kapsar) — `FleksaMPCSolver(dynamic_gpu_cap=...)` veya
+  `fleksa solve --dynamic-gpu-cap`. **Geriye dönük uyumludur**: parametre
+  verilmezse eski sabit `0.65` tabanı döner ( breaking-change DEĞİL);
+  aralık dışı değer ( örn. `0.2`) reddedilir. Önceki dalga hâlâ geçerlidir:
+  talep-temelli saatlik profil ( arXiv:2609.05406, `--gpu-flex=dynamic`) ve
+  eski sabit yol ( `--gpu-flex=fixed`) yeniden-oynanabilir. Diğer
+  bilinen-limitler için bkz.
   [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md) §4.
 - ** Kanıt-üretimi-fleksa-içindedir**; mesh-düzeyinde-mutabakat RFC-010'da.
 

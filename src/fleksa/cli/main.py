@@ -46,9 +46,18 @@ def version():
 @click.option("--battery-soc", default=200.0, help="Initial BESS SoC in kWh.")
 @click.option("--capacity", default=500.0, help="BESS total capacity in kWh.")
 @click.option("--max-kw", default=250.0, help="BESS inverter maximum power in kW.")
-@click.option("--gpu-cap-min", default=0.65, help="Legacy fixed GPU DVFS floor (used only with --gpu-flex=fixed).")
+@click.option("--gpu-cap-min", default=0.35,
+              help="Bottom of the dynamic GPU-cap range [default 0.35] — validates --dynamic-gpu-cap.")
+@click.option("--gpu-cap-max", default=0.95,
+              help="Top of the dynamic GPU-cap range [default 0.95] — validates --dynamic-gpu-cap.")
+@click.option("--dynamic-gpu-cap", default=None, type=float,
+              help="Workload-selected GPU cap floor within [gpu-cap-min, gpu-cap-max] "
+                   "(arXiv:2609.27926 Joule Point / 2608.07971 ElastiCo / 2609.16682 DeepShare). "
+                   "Omit to keep the legacy fixed 0.65 floor (backward compatible).")
 @click.option("--gpu-flex", default="dynamic", type=click.Choice(["dynamic", "fixed"]),
-              help="GPU cap floor mode: 'dynamic' (demand-based, refutes arXiv:2609.05406) or 'fixed' (legacy constant).")
+              help="GPU cap floor mode: 'dynamic' (demand-based per-hour profile, refutes "
+                   "arXiv:2609.05406) or 'fixed' (legacy constant 0.65). An explicit "
+                   "--dynamic-gpu-cap overrides both.")
 @click.option("--gpu-queue", default=750_000.0, type=float,
               help="Peak GPU queue backlog in pending FLOPS (drives the dynamic floor).")
 @click.option("--water-cost", default=0.0, help="Water footprint cost penalty in TRY/kWh.")
@@ -60,6 +69,8 @@ def solve_cmd(
     capacity: float,
     max_kw: float,
     gpu_cap_min: float,
+    gpu_cap_max: float,
+    dynamic_gpu_cap: Optional[float],
     gpu_flex: str,
     gpu_queue: float,
     water_cost: float,
@@ -104,8 +115,15 @@ def solve_cmd(
         ambient_temp_c=temp,
     )
 
+    # GPU cap floor selection. Precedence:
+    #   1) explicit --dynamic-gpu-cap  — workload-selected scalar from the
+    #      dynamic range (2nd-wave rebuttal: arXiv:2609.27926 / 2608.07971 /
+    #      2609.16682)
+    #   2) --gpu-flex=dynamic          — demand-based per-hour profile
+    #      (arXiv:2609.05406)
+    #   3) legacy fixed 0.65 floor     — backward-compatible default
     gpu_flex_profile = None
-    if gpu_flex == "dynamic":
+    if dynamic_gpu_cap is None and gpu_flex == "dynamic":
         # Demand-based per-hour GPU cap floor (rebuttal to arXiv:2609.05406):
         # a fixed percentage floor underestimates real headroom by 17-47%.
         from fleksa.workload.gpu_flexibility import (
@@ -120,13 +138,19 @@ def solve_cmd(
                              sla_pressure=sla)
         )
 
-    solver = FleksaMPCSolver(
-        state=state,
-        horizon_data=horizon_data,
-        min_gpu_cap=gpu_cap_min,
-        gpu_flex_profile=gpu_flex_profile,
-        water_cost_per_kwh=water_cost,
-    )
+    try:
+        solver = FleksaMPCSolver(
+            state=state,
+            horizon_data=horizon_data,
+            min_gpu_cap=gpu_cap_min,
+            max_gpu_cap=gpu_cap_max,
+            dynamic_gpu_cap=dynamic_gpu_cap,
+            gpu_flex_profile=gpu_flex_profile,
+            water_cost_per_kwh=water_cost,
+        )
+    except ValueError as e:
+        click.echo(f"✗ Solver parameter error: {e}", err=True)
+        raise SystemExit(1)
     result = solver.solve()
 
     if json_output:
@@ -146,9 +170,11 @@ def solve_cmd(
     click.echo(f"✓ Optimization Status: {result.status}")
     click.echo(f"✓ Projected Cost: ₺{result.projected_cost_try:,.2f}")
     click.echo(f"✓ Expected Savings vs Baseline: ₺{result.expected_savings_try:,.2f}")
+    rng = result.metadata.get("gpu_cap_dynamic_range") or (0.0, 0.0)
     click.echo(f"✓ GPU Flexibility: {result.metadata.get('gpu_flexibility_mode')} "
                f"(floor {result.metadata.get('gpu_cap_floor_min'):.2f}–"
-               f"{result.metadata.get('gpu_cap_floor_max'):.2f})")
+               f"{result.metadata.get('gpu_cap_floor_max'):.2f}, "
+               f"dynamic range {rng[0]:.2f}–{rng[1]:.2f})")
     click.echo("✓ Hour 0 Dispatch Setpoints:")
     click.echo(f"   • BESS Charge:     {result.p_ch_kw[0]:.1f} kW")
     click.echo(f"   • BESS Discharge:  {result.p_dis_kw[0]:.1f} kW")

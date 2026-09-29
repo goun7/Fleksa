@@ -47,6 +47,23 @@ GPU_CAP_HARD_FLOOR: float = 0.50        # Never throttle below 50% TDP (hardware
 GPU_CAP_CEILING: float = 1.0            # Full TDP
 GPU_CAP_LEGACY_DEFAULT: float = 0.65    # Legacy fixed floor, kept only for backward compatibility
 
+# --- Dynamic GPU flexibility *range* (2nd-wave academic rebuttal, 2026) ---
+# The fixed min_gpu_cap=0.65 threshold is invalid as a single number:
+#
+# * arXiv:2609.27926 ("Joule Point") shows energy-per-inference is U-shaped
+#   in the power cap and the optimum is *workload-dependent* — it sits at
+#   ~43-46% of peak on large GPUs. "high utilization = efficient" is wrong;
+#   one fixed cap cannot be optimal for every workload.
+# * arXiv:2608.07971 ("ElastiCo") shows static capacity partitions lead to
+#   chronic underutilization; the allocation must flex.
+# * arXiv:2609.16682 ("DeepShare") shows assurance should be a continuous,
+#   demand-driven signal rather than a fixed quota (70.58% utilization,
+#   -46% latency vs. static shares).
+#
+# Hence the floor is now selected *within* a range, per workload:
+GPU_CAP_DYNAMIC_MIN: float = 0.35       # Bottom of the dynamic flexibility range (covers the 43-46% optimum)
+GPU_CAP_DYNAMIC_MAX: float = 0.95       # Top of the dynamic flexibility range (near-full TDP)
+
 # Queue backlog (pending FLOPS) at/above which the cluster is considered saturated
 GPU_FLEX_BACKLOG_SATURATION_FLOPS: float = 500_000.0
 # Share of deferred/preemptible workload (Class-1/2/3) that can absorb throttling
