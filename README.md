@@ -134,3 +134,105 @@ Fleksa %100-egemendir; **hiçbir-kardeşe-zorunlu-bağımlılık-yok**:
 - ** PRIVATE_KEY-ÜRETİM-YASAK**, ** mainnet-YASAK**, ** para-harcama-YASAK**.
 - `credential` komutu yalnızca yerel-demo-anahtarı ( `01`*32) kullanır; üretim için
   `FLEKSA_FACILITY_KEY` ortam-değişkeni-VERİLMEZ.
+
+---
+
+## Akademik Kaynaklar (2024-2026)
+
+Bu çalışma aşağıdaki araştırmaya dayanır. **Her referans canlı olarak doğrulanmıştır:**
+`curl -sIL https://arxiv.org/abs/...` → **HTTP 200** ve başlık/gönderim-tarihi sayfa
+içeriğinden birebir teyit edilmiştir (kanıt tablosu en altta).
+
+- **[1] Talep-yanıtı GPU esnekliği** —
+  *PowerSlider: Exploiting Phase Asymmetry for LLM Serving under Demand Response* —
+  Li et al., arXiv 2026.
+  LLM servis kümeleri anlık-güç sınırları altında çalışıyor; şebeke operatörleri yeni
+  kapasiteyi **talep-yanıtına** bağlı kılıyor. Compute-bound prefill frekansla lineer
+  kayıp yaşarken **memory-bound decode 0.57× nominal güne kadar dayanıklı** — yani
+  esneklik iş-yükü fazına göre değişir. Fleksa'nın GPU güç-kapasitesi kararı için
+  en doğrudan dayanak; sabit `min_gpu_cap` neden yanlıştır.
+  [arXiv:2608.21719](https://arxiv.org/abs/2608.21719)
+
+- **[2] Doğrulanabilir yük esnekliği** —
+  *Beyond Scalar Flexibility: From Eligible AI Workloads to Dependable Load Relief* —
+  Li, arXiv 2026.
+  **155.410 GPU'nun 185 günlük** gerçek üretim izinden: anlık uygun kesinti median
+  facility gücünde **%6.35**; ortalama-kalibreli skeler bunu **%17/%25/%47 aşınlatıyor**.
+  Esnekliğin süre, portföy ve güvenilirlikle **sözleşmeye yazılması** gerektiğini
+  gösterir — Fleksa'nın "esneklik-kanıtı üretir" iddiasının ölçülebilirlik çerçevesi.
+  [arXiv:2609.05406](https://arxiv.org/abs/2609.05406)
+
+- **[3] Esnekliği ölçme biçimi** —
+  *Measuring Flexibility through Reduction Potential* — Alexeenko et al., arXiv 2025.
+  "Reduction potential matrix": esnekliğin **ne zaman** ve **ne kadar** olduğu
+  ayrılmazdır; tek bir skaler ("maksimum %35 azaltma") ikisini de yanlış temsil eder.
+  Fleksa'nın saat-başı (zaman) + cap-fraksiyonu (büyüklük) formatındaki dinamik GPU
+  profili, makalenin önerdiği formata tam olarak uyar.
+  [arXiv:2505.09817](https://arxiv.org/abs/2505.09817)
+
+- **[4] Enerji-optimal GPU işletme noktası** —
+  *The Joule Point: an Energy-Optimal Operating Point for AI Inference* —
+  Apartsin & Aperstein, arXiv 2026.
+  Her iş için bir **enerji-optimal işletme noktası** ("Joule Point") vardır ve bu
+  nokta **iş-yükü özelliklerine** bağlıdır, donanım özelliklerine değil — "yüksek
+  utilization = verimli" **yanlıştır**. Fleksa'nın dinamik GPU esneklik aralığının
+  ( `[0.35, 0.95]`) seçiminin temeli.
+  [arXiv:2609.27926](https://arxiv.org/abs/2609.27926)
+
+- **[5] Faz-ayrık güç kontrolü** —
+  *Phase-Decoupled, Model-Calibrated Power Control for Disaggregated LLM Serving* —
+  Kim et al., arXiv 2026.
+  Optimal güç ayarı GPU sınıfının değil, **dağıtılan model/quantization/engine
+  bileşiminin** bir özelliğidir. 8× B200'de **+20.4% tokens/J, +3.5% mean e2e**
+  (Max-Q: +8.6% at +5.2%) — her iki eksende Pareto iyileşmesi. Sabit-oran GPU kapa
+  varsayımının ikinci çürütülmesi.
+  [arXiv:2609.11133](https://arxiv.org/abs/2609.11133)
+
+- **[6] Soğutma–hesaplama ortak kontrolü** —
+  *ETCInfer: An Energy-efficient Thermal-aware Cooling-joint Scheduler for LLM
+  Inference in AI Datacenters* — Lu et al., arXiv 2026.
+  CRAC setpoint'i + per-GPU frekans + micro-batch boyutunu **ortak** optimize eder:
+  iş-başına enerjide **%33.1'e varan düşüş**, termal-throttle maruziyetinde
+  **%92.9 düşüş**, SLO ihlali **%0.7'nin altında**. GPU throttle'ının bir özellik
+  değil, bir **maliyet** olduğunu kanıtlar.
+  [arXiv:2609.15230](https://arxiv.org/abs/2609.15230)
+
+- **[7] Şebeke-tümleşik compute iş-yükü** —
+  *Job Class Thermal Intent Aware Liquid Cooling Allocation for AI Data Centers* —
+  Sunkara, arXiv 2026.
+  İş-sınıfı termal bilgisinin soğutma denetleyicisine doğrudan beslenmesi **%56.4 daha
+  az termal ihlal** veriyor; termal-farkındalık **şebeke tarafında ani talebi
+  azaltıyor** ve yük tahminini iyileştiriyor. Fleksa'nın `LoadClass` (Class 0–3)
+  modelinin doğrulaması.
+  [arXiv:2609.30785](https://arxiv.org/abs/2609.30785)
+
+- **[8] Yenilenebilir-tümleşik dağıtık AI** —
+  *Green Distributed AI Training: Orchestrating Compute Across Renewable-Powered
+  Micro Datacenters* — Tomei et al., arXiv 2025.
+  AI iş-yüklerinin büyümesi, giderek kesintili yenilenebilir üretimle çakışıyor;
+  iş-yüklerinin mikro veri merkezleri arasında dağıtılması bir çözüm. Fleksa'nın
+  tesisler-arası esneklik taşımacılığı ( grid-follower compute) ve mesh entegrasyonu
+  için stratejik motivasyon.
+  [arXiv:2511.16182](https://arxiv.org/abs/2511.16182)
+
+> **Tam liste:** 24 doğrulanmış 2024–2026 makalesi ( MPC/MILP dispatch, batarya
+> degradasyonu, M&V belirsizliği katmanları dahil) için
+> [`docs/arastirma/akademik-arastirma-2026.md`](docs/arastirma/akademik-arastirma-2026.md).
+
+### Doğrulama kanıtı ( canlı teyit)
+
+| # | Kaynak | Yayın yılı | `curl -sIL arxiv.org/abs/…` |
+|---|---|---|---|
+| 1 | arXiv:2608.21719 — PowerSlider | 2026 | **200** |
+| 2 | arXiv:2609.05406 — Beyond Scalar Flexibility | 2026 | **200** |
+| 3 | arXiv:2505.09817 — Reduction Potential | 2025 | **200** |
+| 4 | arXiv:2609.27926 — The Joule Point | 2026 | **200** |
+| 5 | arXiv:2609.11133 — Phase-Decoupled Power Control | 2026 | **200** |
+| 6 | arXiv:2609.15230 — ETCInfer | 2026 | **200** |
+| 7 | arXiv:2609.30785 — JCTI Liquid Cooling | 2026 | **200** |
+| 8 | arXiv:2511.16182 — Green Distributed AI Training | 2025 | **200** |
+
+Tüm başlıklar ve gönderim-tarihleri canlı sayfa içeriğinden birebir okunmuştur;
+**hiçbir referans uydurulmamıştır**. Eklemiş bir DOI teyidi:
+`https://doi.org/10.23919/ACC60939.2024.10644173` → **HTTP 202** (tam listedeki
+[18] ACC 2024 makalesi).
