@@ -15,6 +15,8 @@ yanıtı-kararının gerçekten-yürütüldüğünü ve ölçülebildiğini kayd
 grid-sinyali → MPC-çekirdeği ( HiGHS) → dispatch-kararı
         ↓ ( her-adımda-ölçüm-kanıtı)
    IPMVP-M&V-stüdyosu → Merkle-kanıt → bağımsız-denetim ( audit-verify)
+        ↓ ( ölçüm-kanıtı → hash-zinciri)
+   Tamga-anchor ( RFC 8785 JCS + sha256(prev‖jcs)) → mesh-düzeyinde-kanıt
 ```
 
 ---
@@ -25,7 +27,7 @@ Gereksinim: Python ≥ 3.11 ve `scipy`, `numpy`, `pydantic`, `click`, `cryptogra
 Bunlar bu makinede **zaten yüklü** ( scipy 1.18.1, pydantic 2.13.5).
 
 ```bash
-# 0) Testleri çalıştır ( 171 test, hepsi yeşil olmalı)
+# 0) Testleri çalıştır ( 189 test, hepsi yeşil olmalı)
 python3 -m pytest tests/ -q
 
 # 1) Kurulum gerektirmeden, kaynak üzerinden çalıştır
@@ -74,6 +76,7 @@ fleksa ui
 | `solve` | 24-saatlik Receding-Horizon MILP ( HiGHS) dispatch | — |
 | `audit` | IPMVP Option B baseline + ASHRAE 14 + Merkle kanıt | EVO 10001-1:2022 |
 | `audit-verify` | Bir raporu **bağımsız** olarak sıfırdan yeniden hesaplayıp doğrular | bu-sürüme-ait |
+| `tamga-anchor` | Ölçüm kanıtlarını bağımsız **Tamga** hash-zincirine sabitler | RFC 8785 / tamga-sim/1 |
 | `benchmark` | EPIAŞ 2026.1 PTF/SMF verisini özetler | — |
 | `arbitrage-gate` | Arbitraj kârlılık kapısı ( break-even + degradasyon) | — |
 | `canary` | Byzantine 2-of-3 fiyat-kaynak konsensüsü | — |
@@ -97,10 +100,77 @@ Fleksa %100-egemendir; **hiçbir-kardeşe-zorunlu-bağımlılık-yok**:
 | Özellik | Uygulama |
 |---|---|
 | M&V-kanıtı | IPMVP Option B baseline + Merkle-ağacı-kökü |
+| Mesh-kanıtı | Tamga hash-zinciri: `sha256(prev ‖ jcs(rec))`, RFC 8785 JCS |
 | Bağımsız-denetim | `audit-verify` ile sıfırdan-yeniden-hesaplama |
 | Fiyat-kanıtı | Byzantine 2-of-3 triangulation-canary |
 | Kimlik-kanıtı | Ed25519-imzalı W3C Verifiable Credential |
 | Flex-Policy-v2 | egemen-stüdyo; dış-politikaya-bağımlı-DEĞİL |
+
+## Tamga anchor ( mesh-düzeyinde kanıt)
+
+Fleksa'nın M&V kanıtı kendi içinde **tamamlanmıştır** ( `audit` + `audit-verify`
+sıfırdan-yeniden-hesaplar), ama " kanıt-üretimi-fleksa-içindedir; mesh-düzeyinde-
+mutabakat RFC-010'da" sınırına bir adım ekler: enerji ölçüm kanıtlarını **Tamga**'nın
+bağımsız hash-zincirine sabitleyen [`src/fleksa/audit/tamga_anchor.py`](src/fleksa/audit/tamga_anchor.py)
+modülü. Böylece her ölçüm-kanıtı yalnızca Fleksa'nın Merkle defterinde değil,
+Tamga'nın da değiştirilemez zincirinde commitment-altındadır — üreticinin kendisi
+( Fleksa) bile geriye-dönük olarak değiştiremez.
+
+**Neden iki zincir?** Merkle-ağacı tek-bir-**anlık-görüntü** commitment'tır: tüm
+ölçümleri tek-bir kök-hash'e indirger ve herhangi bir ölçümde geriye-dönük bir
+değişiklik kökü değiştirir — ama ağaç, yaprakların **eklenme-sırası** hakkında
+bir şey söylemez ( kök aynı kaldığı sürece yer-değiştirme fark-edilmez). Tamga
+hash-zinciri bunu tamamlar: her kayıt bir öncekinin hash'ini `prev` ile bağlar,
+bu yüzden sıralama da kriptografik olarak dondurulür. İkisini birleştirmek ölçüm
+kanıtlarını hem anlık-görüntü hem de sıralı olarak bağlar.
+
+**Tamga ledger modeli** ( TamgaProtocol `docs/ARCHITECTURE.md:42` ve
+`tamga_runner._verify_chain` ile birebir):
+
+```
+seq  : 1-based artan tamsayı
+prev : önceki kaydın h değeri; İLK kayıt için 64×'0' ( genesis)
+h    = sha256( prev ‖ jcs( kayıt − {h}))     # RFC 8785 JCS — Python json DEĞİL
+kayıt: {seq, prev, h} + yük alanları ( ölçüm kanıtı + Merkle kökü)
+```
+
+İki kritik ayrım ( yanlış-anlaşılırsa digest uyuşmaz): (1) `prev` hem **dize-prefix**
+olarak hem jcs'in **içinde** bulunur; (2) canonicalization **RFC 8785 (JCS)**'dir —
+üye-adları UTF-16 kod-birim sırasıyla ( §3.2.3), sayılar ECMAScript
+`Number.prototype.toString` algoritmasıyla ( §3.2.2.2: `1.0` → `"1"`,
+`2.93e-07` → `"2.93e-7"`). Bu yüzden Node/Go/Rust ile yazılmış bir Tamga verifier'ı
+aynı baytları yeniden türetir; `json.dumps(sort_keys=True)` yalnızca Python'da
+çalışır. JCS bu modüle **bağımlılıksız** ( stdlib-only) gömülmüştür — Fleksa
+%100-egemen kalır, Tamga kurulumuna runtime bağımlılığı YOK.
+
+**Üç katmanlı doğrulama** ( `OlcumTamgaSabitleyici.dogrula()`):
+
+1. **Tamga zincir bütünlüğü** — 1-based seq + `prev`-bağlantısı + hash-tekrar-hesabı.
+2. **Çapraz-çapa ( cross-anchor)** — her kaydın taşıdığı `merkle_kok`, kayıtlı
+   ölçümlerden Fleksa'nın KENDİ `CryptographicSavingsLedger` modeliyle
+   yeniden-türetilmelidir. Fleksa defterinde geriye-dönük bir değişiklik yapılırsa
+   Tamga zinciri artık o kanıtı doğrulamaz ( ve tersi).
+3. **Tamlık ( completeness)** — her ölçüm sabitlenmiş olmalı ( atlanmış kanıt yok).
+
+**Merkle modeli yeniden-icat-EDİLMEDİ** — `sabitle_ledger()` mevcut bir Fleksa
+defterini olduğu gibi alır, yaprak ve kökleri birebir koruyarak zincire bağlar;
+iki digest-uzayı **değer** düzeyinde köprülenir ( Merkle kökü Tamga kaydında taşınır).
+
+```bash
+# 1) ölçüm kanıtlarını üret ve bağımsız Tamga hash-zincirine sabitle
+PYTHONPATH=src python3 -m fleksa tamga-anchor --ledger /tmp/fleksa-tamga.jsonl
+#   → "Anchor verified: YES": event-hour ölçümleri + savings iddiası TEK zincirde.
+
+# 2) çıktı, Tamga'nın KENDİ bağımsız verifier'ında doğrulanır ( dış repo, sıfır-güven):
+python3 -c "import sys; sys.path.insert(0,'/home/gokun/projects/05_acik_kaynak/TamgaProtocol'); \
+import tamga_runner as t, pathlib; print(t._ledger_head(pathlib.Path('/tmp/fleksa-tamga.jsonl')))"
+#   → ( <head-hash>, 'ok')  ← Fleksa'nın hiçbir koduna güvenmeden
+```
+
+Test: [`tests/test_tamga_anchor.py`](tests/test_tamga_anchor.py) — 18 test; JCS
+bayt-paritesi ( `tamga_canon.jcs` ile), genesis/seq/hash kuralı, Merkle çapraz-çapa
+birebilirliği, kurcalama-tespiti ( her iki zincirde), JSONL fail-closed round-trip
+ve **Tamga'nın kendi `tamga_runner._verify_chain` verifier'ında GREEN**.
 
 ## Sınırlar ( dürüst)
 

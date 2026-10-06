@@ -5,7 +5,7 @@ Industrial-grade sovereign toolset for energy flexibility, BESS arbitrage, and c
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 import click
 import numpy as np
 
@@ -21,6 +21,7 @@ from fleksa.protocols.modbus import SunSpecInverterMapper
 from fleksa.protocols.attestation import W3cAttestationBuilder
 from fleksa.audit.baseline import IpmvpBaselineEngine
 from fleksa.audit.ledger import CryptographicSavingsLedger
+from fleksa.audit.tamga_anchor import OlcumTamgaSabitleyici, olcum_kanit_uret
 
 
 DEFAULT_BENCHMARK_PATH = Path(__file__).parent.parent.parent.parent / "data" / "epias_2026_benchmark.json"
@@ -313,13 +314,12 @@ def monte_carlo_cmd(runs: int, seed: int, capacity: float, max_kw: float):
     click.echo(f"  • Loss Probability:    %{loss_count / runs * 100.0:.2f} (Theorem 1 Invariant Guarantee)")
 
 
-@main.command(name="audit")
-@click.option("--history-days", default=5, help="Number of similar baseline days to simulate.")
-@click.option("--report", type=click.Path(), default=None,
-              help="Write a self-contained M&V report JSON that `fleksa audit-verify` can independently re-check.")
-def audit_cmd(history_days: int, report: Optional[str]):
-    """Executes IPMVP Option B / ASHRAE Guideline 14 baseline M&V audit."""
-    click.echo(f"⚡ Computing IPMVP 10-in-10 baseline over {history_days} historical days...")
+def _ipmvp_audit_scenario(history_days: int) -> Dict[str, Any]:
+    """Deterministic IPMVP Option B M&V scenario shared by `audit` and `tamga-anchor`.
+
+    Fixed seed (123) and fixed curves so that `audit`, `audit-verify` and the
+    Tamga anchor all replay byte-identical measurements over the same event day.
+    """
     rng = np.random.default_rng(123)
 
     # 24-hour typical commercial facility load profile
@@ -357,9 +357,42 @@ def audit_cmd(history_days: int, report: Optional[str]):
         baseline=adjusted_baseline[:17],
     )
 
-    ledger = CryptographicSavingsLedger()
-    ledger.append_entry({"event": "DR_PEAK_SHAVE", "savings": savings})
-    root = ledger.compute_merkle_root()
+    # The Merkle root that `fleksa audit` commits to (single savings entry).
+    audit_ledger = CryptographicSavingsLedger()
+    audit_ledger.append_entry({"event": "DR_PEAK_SHAVE", "savings": savings})
+
+    return {
+        "history": history,
+        "baseline": baseline,
+        "actual": actual,
+        "ptf": ptf,
+        "event_hours": event_hours,
+        "event_start_hour": 17,
+        "pre_event_actual_2h_kw": pre_event_actual_2h_kw,
+        "adjusted_baseline": adjusted_baseline,
+        "savings": savings,
+        "ashrae": ashrae,
+        "audit_merkle_root": audit_ledger.compute_merkle_root(),
+    }
+
+
+@main.command(name="audit")
+@click.option("--history-days", default=5, help="Number of similar baseline days to simulate.")
+@click.option("--report", type=click.Path(), default=None,
+              help="Write a self-contained M&V report JSON that `fleksa audit-verify` can independently re-check.")
+def audit_cmd(history_days: int, report: Optional[str]):
+    """Executes IPMVP Option B / ASHRAE Guideline 14 baseline M&V audit."""
+    click.echo(f"⚡ Computing IPMVP 10-in-10 baseline over {history_days} historical days...")
+    scn = _ipmvp_audit_scenario(history_days)
+    history = scn["history"]
+    actual = scn["actual"]
+    ptf = scn["ptf"]
+    event_hours = scn["event_hours"]
+    pre_event_actual_2h_kw = scn["pre_event_actual_2h_kw"]
+    adjusted_baseline = scn["adjusted_baseline"]
+    savings = scn["savings"]
+    ashrae = scn["ashrae"]
+    root = scn["audit_merkle_root"]
 
     click.echo("✓ IPMVP Option B Audit Results:")
     click.echo(f"  • Curtailed Energy:  {savings['net_curtailed_kwh']:.1f} kWh")
@@ -538,6 +571,75 @@ def audit_verify_cmd(report_file: str):
     else:
         click.echo("✗ VERIFICATION FAILED — claims do not match an independent recomputation.", err=True)
         raise SystemExit(1)
+
+
+@main.command(name="tamga-anchor")
+@click.option("--history-days", default=5,
+              help="Number of similar baseline days to simulate (same deterministic model as `audit`).")
+@click.option("--facility-id", default="tr-ist-eqx-02",
+              help="Facility ID recorded in each measurement proof.")
+@click.option("--ledger", "ledger_path", type=click.Path(), default=None,
+              help="Write the Tamga `tamga-sim/1` hash-chain ledger as JSONL "
+                   "(independently verifiable by TamgaProtocol's own verifier).")
+@click.option("--json-output", is_flag=True, default=False,
+              help="Emit a machine-parseable JSON summary instead of prose.")
+def tamga_anchor_cmd(history_days: int, facility_id: str, ledger_path: Optional[str], json_output: bool):
+    """Anchors the IPMVP measurement proofs to the independent Tamga hash chain.
+
+    Every event-hour measurement (adjusted baseline vs actual meter, IPMVP
+    Option B) is appended to a Tamga hash chain (RFC 8785 JCS +
+    sha256(prev || jcs(rec)), 1-based seq, 64x'0' genesis), carrying the running
+    Fleksa Merkle root as a cross-anchor. The savings claim of `fleksa audit`
+    is anchored into the same chain, so the Merkle model is not replaced but
+    merged with the Tamga chain.
+    """
+    scn = _ipmvp_audit_scenario(history_days)
+
+    sabitleyici = OlcumTamgaSabitleyici()
+    for h in scn["event_hours"]:
+        sabitleyici.sabitle(olcum_kanit_uret(
+            tesis_id=facility_id,
+            olay="DR_PEAK_SHAVE",
+            olay_id="evt-20261005-peak-01",
+            saat=h,
+            baseline_kw=scn["adjusted_baseline"][h],
+            actual_kw=scn["actual"][h],
+            tarif_try_kwh=scn["ptf"][h],
+        ))
+    # `fleksa audit`'in Merkle defterindeki girdi de aynı zincire sabitlenir —
+    # Merkle modeli olduğu kadar korunur, Tamga zinciriyle birleştirilir.
+    sabitleyici.sabitle({"event": "DR_PEAK_SHAVE", "savings": scn["savings"]})
+
+    if not sabitleyici.dogrula():
+        click.echo("✗ Tamga anchor verification FAILED — measurement chain is not self-consistent.", err=True)
+        raise SystemExit(1)
+
+    jsonl_yolu = None
+    if ledger_path:
+        jsonl_yolu = sabitleyici.tamga.jsonl_yaz(ledger_path)
+
+    ozet = sabitleyici.ozet()
+    if json_output:
+        click.echo(json.dumps({
+            "tamga_format": ozet["tamga_format"],
+            "kaynak": ozet["kaynak"],
+            "olcum_sayisi": ozet["sabitlenen_olcum"],
+            "tamga_tip": ozet["tamga_tip"],
+            "merkle_kok": ozet["merkle_kok"],
+            "audit_merkle_root": scn["audit_merkle_root"],
+            "ledger_jsonl": jsonl_yolu,
+            "dogrulandi": ozet["dogru"],
+        }, indent=2))
+        return
+
+    click.echo("✓ Measurement proofs anchored to the Tamga hash chain:")
+    click.echo(f"  • Measurements:       {ozet['sabitlenen_olcum']} event-hour proof(s)")
+    click.echo(f"  • Tamga chain head:   {ozet['tamga_tip']}")
+    click.echo(f"  • Fleksa Merkle root: {ozet['merkle_kok']}")
+    click.echo(f"  • Audit Merkle root:  {scn['audit_merkle_root']} (fleksa audit claim)")
+    click.echo(f"  • Anchor verified:    {'YES' if ozet['dogru'] else 'NO'}")
+    if jsonl_yolu:
+        click.echo(f"  • Tamga JSONL ledger: {jsonl_yolu}")
 
 
 @main.command(name="canary")
