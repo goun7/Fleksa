@@ -184,26 +184,23 @@ class TestSolveCmd:
         assert res.exit_code == 0
         assert json.loads(res.output)["status"] == "OPTIMAL"
 
-    @pytest.mark.xfail(strict=True, reason="BULGU-2: --hours>24 IndexError verir")
     def test_saat_24_fazlasi_cokmeli_bulgu(self):
-        """BULGU-2 (gerçek bug; production'a DOKUNULMADI):
+        """BULGU-2 (DÜZELTILDI — FL-FLEKSA-1, 2026-10-14):
 
-        ``solve_cmd`` ``--hours > 24`` için yakalanamayan ``IndexError`` ile
-        çöker::
+        Oneski (gerçek bug): ``solve_cmd`` ``--hours > 24`` için
+        yakalanamayan ``IndexError`` ile çöker::
 
             IndexError: index 24 is out of bounds for axis 0 with size 24
 
-        Kök neden: ``pv_gen`` (ve benchmarksız ``ptf``) öntanımlı profilleri
-        24 elemanlı sabit listelerdir ve ``[:hours]`` dilimi 24'ü geçemez —
-        yani horizon 25+ olsa bile profil 24 saatte kilitli kalır. Yalnızca
-        ``benchmark-file`` ile beslenen ``ptf`` son-değerle doldurulur;
-        ``pv_gen`` ASLA doldurulmaz. Bu yüzden 48 saatlik "receding horizon"
-        (modülün kendi başlık özelliği) bile çöker.
+        Kök neden: ``pv_gen`` öntanımlı profili 24 elemanlı sabit liste ve
+        ``[:hours]`` dilimi 24'ü geçemez; ``base_load``/``temp`` hours-dolu,
+        ``ptf`` pad'li — yalnızca ``pv_gen`` 24-saatte kilitli kalıyordu.
 
-        Bu test İSTENEN davranışı iddia eder (temiz OPTIMAL veya düzgün
-        doğrulama mesajı; traceback DEĞİL) ve ``xfail(strict=True)`` ile
-        bug'ı belgeler: düzeltilirse XPASS→FAIL sinyali verir.
+        FIX: ``pv_list = _pv[:hours]`` + son-değerle-doldurma (ptf pad-deseni
+        ile aynı). 48 saatlik "receding horizon" artık çalışır; hours<=24'te
+        davranış değişmez. xfail KALDIRILDI (düzeltme kanıtlandı).
         """
+
         res = RUNNER.invoke(main, ["solve", "--hours", "48", "--json-output"])
         assert res.exit_code == 0
         assert "OPTIMAL" in res.output

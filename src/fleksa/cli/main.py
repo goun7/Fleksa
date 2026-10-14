@@ -97,10 +97,16 @@ def solve_cmd(
         ][:hours])
 
     base_load = np.full(hours, 250.0)
-    pv_gen = np.array([
-        0, 0, 0, 0, 0, 10, 40, 90, 140, 190, 220, 240,
-        240, 210, 170, 110, 50, 10, 0, 0, 0, 0, 0, 0
-    ][:hours])
+    # FL-FLEKSA-1 (2026-10-14, dal-kesen BULGU-2): pv_gen 24-elemanli SABIT
+    # profil + [:hours] dilimi oldugu icin hours>24'te 24'te kalip IndexError
+    #------------- ^ base_load/temp hours-dolu, ptf (pad'li/hrs-dolu) sorunsuz.
+    # Duzelt: son-degerle-doldur (ptf pad-deseniyle ayni). hours<=24'te degisim YOK.
+    _pv = [0, 0, 0, 0, 0, 10, 40, 90, 140, 190, 220, 240,
+           240, 210, 170, 110, 50, 10, 0, 0, 0, 0, 0, 0]
+    pv_list = _pv[:hours]
+    if len(pv_list) < hours:
+        pv_list = pv_list + [pv_list[-1]] * (hours - len(pv_list))
+    pv_gen = np.array(pv_list)
     temp = np.full(hours, 26.0)
 
     state = FacilityState(
