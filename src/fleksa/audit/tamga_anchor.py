@@ -250,8 +250,11 @@ def _json_saf_yap(deger: Any) -> Any:
         return [_json_saf_yap(v) for v in deger]
     if isinstance(deger, bool):
         return deger
-    if isinstance(deger, (int, float, str)) or deger is None:
-        return deger
+    # FL-FLEKSA-B1 (P0-3): numpy dalı (int,float,str) DALINDAN ÖNCE —
+    # np.float64 Python float'unun ALT-SINIFIDIR, eski sıra onu olduğu gibi
+    # geçirip np.generic dalını (.item()) ÖLÜ bırakıyordu → tip-sızıntısı;
+    # sabitle() np.float64'lü payload ile tamga.append → jcs → es_number →
+    # Decimal('np.float64(3.5)') → decimal.InvalidOperation çöküşü.
     # numpy skaler/dizi desteği (fleksa numpy'e bağımlıdır; ama burada
     # çalışma-zamanı import'u ile stdlib-only kalınsın diye guardsız değil):
     try:
@@ -263,6 +266,8 @@ def _json_saf_yap(deger: Any) -> Any:
             return _json_saf_yap(deger.tolist())
         if isinstance(deger, _np.generic):
             return _json_saf_yap(deger.item())
+    if isinstance(deger, (int, float, str)) or deger is None:
+        return deger
     return str(deger)
 
 

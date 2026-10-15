@@ -417,34 +417,16 @@ class TestJsonSafYap:
         assert cikti == "(1+2j)"
         assert isinstance(cikti, str)
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "BULGU-1 (gerçek bug, production'a DOKUNİLMEDİ): _json_saf_yap "
-        "np.float64'ü SAF python float'ına indirgemez. np.float64, Python "
-        "float'ının alt-sınıfı olduğundan isinstance(deger,(int,float,str)) "
-        "dalı (modül satır 253) onu yakalar ve np.generic dalı (satır 264, "
-        ".item()) HİÇ çalışmaz → değer numpy.float64 olarak sızar. Sonuç: "
-        "sabitle() np.float64 içeren bir payload ile çağrılırsa tamga.append "
-        "→ jcs → es_number → Decimal(repr(np.float64(3.5))) → NumPy 2.x "
-        "skaler repr'ı 'np.float64(3.5)' olduğundan decimal.InvalidOperation "
-        "fırlatır. Düzeltme: float dalından önce numpy generic kontrolü veya "
-        "float(...) ile sarmak. Test düzeltilince XPASS→FAIL sinyali verir."
-    ))
     def test_numpy_float64_saf_tipe_iner(self):
-        """İDDİA (bozuk): np.float64 SAF python float'ına inmelidir."""
+        """BULGU-1 (DUZELTILDI FL-FLEKSA-B1): np.float64 artik SAF python
+        float'ına iner — numpy-generic-dali float-dalindanOnce calisir."""
         import numpy as np
         cikti = _json_saf_yap(np.float64(3.5))
         assert type(cikti) is float
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "BULGU-1'nin uç-nokta etkisi: sabitle() belgelenen numpy M&V akışında "
-        "(modül docstring'i 'Fleksa M&V akışı numpy skalerleri/vektörleri "
-        "üretir' der) np.float64 içeren ölçümü InvalidOperation ile çöktürür. "
-        "Mevcut CLI yolu (olcum_kanit_uret her şeyi float() ile sarar) bu "
-        "yüzden çalışır; sadece doğrudan sabitle()/sabitle_ledger() çağrısı "
-        "tetikler. Production'a dokunulmadı."
-    ))
     def test_sabitle_numpy_float64_payload_cokmemeli(self):
-        """İDDİA (bozuk): numpy ölçüm kanıtı sabitlenebilmelidir."""
+        """BULGU-1-etkisi (DUZELTILDI): numpy M&V akışından gelen np.float64
+        ölçüm-artık InvalidOperation ile çökmez — sabitle→dogrula-geçer."""
         import numpy as np
         sabitleyici = OlcumTamgaSabitleyici()
         sabitleyici.sabitle({
