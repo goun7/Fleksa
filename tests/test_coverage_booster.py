@@ -433,13 +433,23 @@ def test_cli_remaining_branches(tmp_path, monkeypatch):
     assert res3.exit_code == 0
 
     # 4. Benchmark file does not exist branch (line 76 & lines 398-399)
-    from fleksa.cli import main as cli_mod
+    # DUZELTILDI BULGU-4 (test-sirasi-kirliligi): eskiden
+    # ``from fleksa.cli import main as cli_mod`` ile yama yapiliyordu; bu ad
+    # ``fleksa.cli`` paketindeki ``main`` grubuna (Group) baglanir — modulun
+    # kendisine degil. hangi içe-aktarmanin en-son calistigina bagli olarak
+    # ``cli_mod`` ya Group ya modül oluyordu: tek-basina kosuda
+    # ``AttributeError: <Group main> has no attribute DEFAULT_BENCHMARK_PATH``,
+    # tam-suite'de ise yama tutuyor ve farkli bir oneri kirmiyordu
+    # (test-order-baimli kirik-yesil). Simdi deterministik: ``sys.modules``.
+    import sys as _sys
+    cli_mod = _sys.modules["fleksa.cli.main"]
     monkeypatch.setattr(cli_mod, "DEFAULT_BENCHMARK_PATH", tmp_path / "non_existent.json")
     res_no_bench = runner.invoke(main, ["solve", "--hours", "12"])
     assert res_no_bench.exit_code == 0
 
+    # DUZELTILDI BULGU-3: eksik veri-seti artik rc=0 DEGIL rc=1 (fail-open degildi)
     res_bench_missing = runner.invoke(main, ["benchmark"])
-    assert res_bench_missing.exit_code == 0
+    assert res_bench_missing.exit_code == 1
     assert "Benchmark file not found" in res_bench_missing.output
 
     # 5. cli/main.py __main__ block

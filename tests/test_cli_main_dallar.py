@@ -446,6 +446,21 @@ class TestAuditCmd:
         assert "out_of_window_curtailed_kwh" in payload["claims"]
         assert isinstance(payload["claims"]["out_of_window_curtailed_kwh"], float)
 
+    def test_minimum_altinda_gecmis_gun_rc2(self, tmp_path):
+        """DUZELTILDI BULGU-2 — ``audit`` kolu: ``--history-days 2`` → rc=2 +
+        okunur mesaj; sahte "Computing IPMVP" banner'ı YOK ve rapor dosyası
+        OLUŞMAZ (yarım-denetim-deligi bırakmaz).
+
+        ESKİ davranış: motorun ``ValueError``'ı yakalanmadan ham traceback
+        olarak dökülüyordu (rc=1).
+        """
+        yol = tmp_path / "rapor.json"
+        res = RUNNER.invoke(main, ["audit", "--history-days", "2", "--report", str(yol)])
+        assert res.exit_code == 2
+        assert "Invalid --history-days=2" in res.output
+        assert "Computing IPMVP" not in res.output
+        assert not yol.exists()
+
 
 # ============================================================== audit-verify
 
@@ -495,6 +510,24 @@ class TestAuditVerifyCmd:
         res = RUNNER.invoke(main, ["audit-verify", str(_rapor_yaz(tmp_path, payload))])
         assert res.exit_code == 2
         assert "missing required inputs" in res.output
+
+    def test_ucden_az_gecmis_gun_rc2(self, tmp_path):
+        """DUZELTILDI BULGU-2 (`audit-verify` kolu): 3'ten az geçmiş günü olan
+        rapor → rc=2 + okunur mesaj; eskiden baseline motorunun yakalanmayan
+        ``ValueError``'ı ham traceback olarak dökülüyordu (rc=1).
+
+        Kanıt (motor sözleşmesi değişmedi): ``_ipmvp_audit_scenario(2)`` hâlâ
+        ``ValueError`` fırlatır — yani red baseline motorundan GELİYORDU ve CLI
+        sınırı onu kullanıcı-adına çeviriyor.
+        """
+        payload = copy.deepcopy(_haneli_rapor(tmp_path))
+        payload["inputs"]["history_days"] = payload["inputs"]["history_days"][:2]
+        res = RUNNER.invoke(main, ["audit-verify", str(_rapor_yaz(tmp_path, payload))])
+        assert res.exit_code == 2
+        assert "at least 3 are required" in res.output
+        assert "VERIFICATION PASSED" not in res.output
+        with pytest.raises(ValueError):
+            _ipmvp_audit_scenario(2)
 
     def test_olmayan_rapor_cikis_2(self):
         """Başarısızlık dalı: ``click.Path(exists=True)`` rc=2 verir."""
@@ -615,15 +648,24 @@ class TestTamgaAnchorCmd:
         assert json.loads(res.output)["olcum_sayisi"] == 5
 
     def test_minimum_altinda_gecmis_gun_coker(self):
-        """Başarısızlık dalı: ``--history-days 2`` → bağımsız yeniden-hesaplama
-        ValueError fırlatır (en az 3 gün gerekir); rc=1, PASSED YOK.
+        """DUZELTILDI BULGU-2 — başarısızlık dalı: ``--history-days 2`` → rc=2 +
+        okunur doğrulama mesajı; sahte "hesaplanıyor" banner'ı YOK.
 
-        Gözlem: değer CLI katmanında doğrulanmaz; traceback olarak yansır —
-        temiz bir doğrulama mesajı yerine.
+        ESKİ davranış (pin'lenen hata): değer CLI katmanında doğrulanmazdı,
+        baseline motorunun ``ValueError``'sı ham traceback olarak kullanıcıya
+        dökülüyordu (rc=1 + ``res.exception is ValueError``). Artık CLI sınırı
+        girdi-hatasını adıyla söyler ve tahriz-format convention'ıyla rc=2 ile
+        fail-closed çıkar (``audit-verify``'in "eksik girdi" rc=2'siyle aynı).
+        Motor sözleşmesi DEĞİŞMEDİ: ``_ipmvp_audit_scenario(2)`` hâlâ
+        ``ValueError`` fırlatır (aşağıdaki ``TestIpmvpAuditScenario`` pini).
         """
         res = RUNNER.invoke(main, ["tamga-anchor", "--history-days", "2", "--json-output"])
-        assert res.exit_code == 1
-        assert isinstance(res.exception, ValueError)
+        assert res.exit_code == 2
+        assert isinstance(res.exception, SystemExit)
+        assert "Invalid --history-days=2" in res.output
+        # fail-closed sırası: geçersiz girdi için ilerleme-banner'ı basılmaz
+        assert "Computing IPMVP" not in res.output
+        assert "merkle_kok" not in res.output
 
 
 # ===================================================================== canary
@@ -783,23 +825,33 @@ class TestBenchmarkCmd:
         assert "EPIAŞ Benchmark Dataset" in res.output
 
     def test_veri_seti_yok_bulgu(self, monkeypatch):
-        """BULGU-3 (küçük gap; production'a DOKUNULMADI):
+        """DUZELTILDI BULGU-3: ``benchmark`` veri seti yoksa artık rc=1.
 
-        ``benchmark_cmd`` veri seti bulunamadığında ``"✗ Benchmark file not
-        found."`` yazar ama ``return`` ile (SystemExit yerine) döner — yani
-        hata durumunu **exit code 0** ile bildirir. Bu, ``fleksa benchmark &&
-        ...`` tarzı betiklerin hatayı sessizce başarı sanmasına neden olur.
-
-        Bu test GERÇEK davranışı belgeler (rc=0 + hata mesajı); ideal davranış
-        rc≠0 olurdu, ama ``xfail`` koymuyoruz çünkü bu API sözleşmesi gereği
-        kasıtlı bir ``return``'dür — yalnızca raporlanır.
+        ESKİ davranış (pin'lenen hata): ``✗ Benchmark file not found.`` yazıp
+        ``return`` ediyordu → **exit code 0**. ``fleksa benchmark && sonraki-adim``
+        zincirleri bozuk/eksik veri setini sessizce "başarı" sayıyordu
+        (fail-open). Artık modülün diğer hata yollarıyla aynı idiyom: ✗ + rc=1.
         """
         from fleksa.cli import main as mod
         monkeypatch.setattr(_CLI_MOD, "DEFAULT_BENCHMARK_PATH",
                             Path("/tmp/fleksa_bench_yok_2026.json"))
         res = RUNNER.invoke(main, ["benchmark"])
-        assert res.exit_code == 0
+        assert res.exit_code == 1
         assert "Benchmark file not found." in res.output
+
+    def test_veri_seti_var_rc0(self, monkeypatch, tmp_path):
+        """BULGU-3 regresyon sınırı: aynı komut VERİ SETİ VARKE hâlâ rc=0 ve
+        özet basar — düzeltme yalnızca yok-dalını sertleştirir.
+        """
+        bench = tmp_path / "bench.json"
+        bench.write_text(json.dumps({"records": [
+            {"ptf": 2000000, "smf": 2100000, "day": "2026-01-01"},
+            {"ptf": 2400000, "smf": 2500000, "day": "2026-01-02"},
+        ]}), encoding="utf-8")
+        monkeypatch.setattr(_CLI_MOD, "DEFAULT_BENCHMARK_PATH", bench)
+        res = RUNNER.invoke(main, ["benchmark"])
+        assert res.exit_code == 0
+        assert "EPIAŞ Benchmark Dataset" in res.output
 
 
 # ===================================================================== ui

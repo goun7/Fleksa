@@ -382,14 +382,43 @@ def _ipmvp_audit_scenario(history_days: int) -> Dict[str, Any]:
     }
 
 
+# Baseline motorunun (IpmvpBaselineEngine.calculate_10_in_10_baseline) serbestlik
+# derecesi alt sınırı; `audit` ve `tamga-anchor` CLI seçenekleri bunu kabul eder.
+MIN_HISTORY_DAYS = 3
+
+
+def _ipmvp_audit_scenario_cli(history_days: int) -> Dict[str, Any]:
+    """DUZELTILDI BULGU-2: `_ipmvp_audit_scenario` çağrısını CLI-katmanı
+    doğrulamasıyla sarar.
+
+    Eskiden `--history-days 2` (veya 0/negatif) baseline motorunda yakalanmayan
+    bir ``ValueError`` üretiyordu: kullanıcıya ham Python traceback'i dökülüyordu
+    (rc=1). Artık fail-closed ve anlaşılır: ✗ satırı + rc=2 — `audit-verify`'in
+    "eksik/bozuk girdi" için kullandığı rc=2 convention'ıyla aynı; beklenen
+    sonuçların uyuşmaması (doğrulama REDDİ) rc=1 olarak kalmaya devam eder.
+
+    Motor/yardımcı sözleşmesi DEĞİŞMEZ: `_ipmvp_audit_scenario(2)` hâlâ
+    ``ValueError`` fırlatır (tests/test_cli_main_dallar.py bunu pinler); yalnızca
+    CLI sınırı bu hatayı kullanıcı-adına çevirir.
+    """
+    try:
+        return _ipmvp_audit_scenario(history_days)
+    except ValueError as exc:
+        click.echo(f"✗ Invalid --history-days={history_days}: {exc}", err=True)
+        click.echo(f"  • At least {MIN_HISTORY_DAYS} historical days are required.", err=True)
+        raise SystemExit(2)
+
+
 @main.command(name="audit")
 @click.option("--history-days", default=5, help="Number of similar baseline days to simulate.")
 @click.option("--report", type=click.Path(), default=None,
               help="Write a self-contained M&V report JSON that `fleksa audit-verify` can independently re-check.")
 def audit_cmd(history_days: int, report: Optional[str]):
     """Executes IPMVP Option B / ASHRAE Guideline 14 baseline M&V audit."""
+    # Girdi doğrulaması "hesaplanıyor" banner'ından ÖNCE çalışır: geçersiz
+    # --history-days için sahte bir ilerleme satırı basılmaz (fail-closed).
+    scn = _ipmvp_audit_scenario_cli(history_days)
     click.echo(f"⚡ Computing IPMVP 10-in-10 baseline over {history_days} historical days...")
-    scn = _ipmvp_audit_scenario(history_days)
     history = scn["history"]
     actual = scn["actual"]
     ptf = scn["ptf"]
@@ -493,6 +522,15 @@ def audit_verify_cmd(report_file: str):
                            payload.get("report_version")))
 
     history = [np.asarray(d, dtype=float) for d in inputs["history_days"]]
+    # DUZELTILDI BULGU-2 (aynı hata-sınıfının `audit-verify` kolu): 3'ten az
+    # geçmiş günü olan bir rapor baseline motorunda yakalanmayan ``ValueError``
+    # ile ham traceback üretiyordu (rc=1). Bu bir girdi-BİÇİMİ hatasıdır
+    # (yeniden-hesaplama hiç yapılamaz), dolayısıyla yukarıdaki "eksik girdi"
+    # convention'ıyla aynı rc=2 ile fail-closed reddedilir.
+    if len(history) < MIN_HISTORY_DAYS:
+        click.echo(f"✗ Report has {len(history)} history day(s); at least "
+                   f"{MIN_HISTORY_DAYS} are required for the 10-in-10 baseline.", err=True)
+        raise SystemExit(2)
     actual = np.asarray(inputs["actual_meter_kw"], dtype=float)
     ptf = np.asarray(inputs["ptf_tariff_try_kwh"], dtype=float)
     event_hours = list(inputs["event_hours"])
@@ -599,7 +637,7 @@ def tamga_anchor_cmd(history_days: int, facility_id: str, ledger_path: Optional[
     is anchored into the same chain, so the Merkle model is not replaced but
     merged with the Tamga chain.
     """
-    scn = _ipmvp_audit_scenario(history_days)
+    scn = _ipmvp_audit_scenario_cli(history_days)
 
     sabitleyici = OlcumTamgaSabitleyici()
     for h in scn["event_hours"]:
@@ -754,8 +792,14 @@ def credential_cmd(facility_id: str, curtailed_kwh: float):
 def benchmark_cmd():
     """Displays summary of the EPIAŞ 2026.1 benchmark dataset."""
     if not DEFAULT_BENCHMARK_PATH.exists():
+        # DUZELTILDI BULGU-3: eskiden sadece `return` idi → hata rc=0 ile
+        # "başarı" olarak dönüyordu. `fleksa benchmark && sonraki-adim` tarzı
+        # zincirler bozuk veri setini sessizce geçiyordu (fail-open). Artık
+        # modülün diğer hata yollarıyla aynı click idiyomu: ✗ mesajı + rc=1
+        # (`solve`/`canary`/`audit-verify` dalları da `raise SystemExit(1)`
+        # kullanır; 2 yalnızca girdi-formatı hatalarına ayrılmıştır).
         click.echo("✗ Benchmark file not found.")
-        return
+        raise SystemExit(1)
 
     data = json.loads(DEFAULT_BENCHMARK_PATH.read_text(encoding="utf-8"))
     recs = data.get("records", [])

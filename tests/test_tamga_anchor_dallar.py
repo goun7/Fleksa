@@ -218,18 +218,23 @@ class TestJcsKodlayici:
         assert jcs(deger) == beklenen
 
     def test_bool_savunma_dali_odur_kod(self):
-        """Dal/GÖZLEM: ``_encode`` içindeki ``isinstance(o, bool)`` dalı (modül
-        satır 181) ÖLÜ-KODDUR — hiçbir girdi onu çalıştıramaz.
+        """DUZELTILDI P3-olu-dal — ``_encode`` içindeki ``isinstance(o, bool)``
+        savunma dalı KALDIRILDI; bu test o kaldırmanın iki gerçeğini pinler.
 
-        İspat: ``bool``'un yalnızca iki örneği vardır (``True``/``False``) ve
-        ``class X(bool)`` Python'da yasaktır ("type 'bool' is not an acceptable
-        base type"), yani bir bool ALT-SINIFI da üretilemez. Dolayısıyla
-        ``o is True`` / ``o is False`` kimlik dalları her bool'u yakalar ve
-        ``isinstance(o, bool)`` dalına ASLA düşülmez. Bu test o gerçeği belgeler:
-        production'a DOKUNULMADI; dal kesme amacıyla gerçek (ulaşılamayan) dal
-        olarak işaretlendi.
+        Gerçek 1: ``bool`` alt-sınıflandırılamaz ("type 'bool' is not an
+        acceptable base type"), dolayısıyla ``bool``'un TEK iki örneği
+        ``True``/``False`` singleton'larıdır ve ``o is True`` / ``o is False``
+        kimlik dalları her bool'u yakalar → ``isinstance(o, bool)`` dalına
+        düşülemez, dal ÖLÜYDÜ (silinmesi davranışı değiştirmedi).
+
+        Gerçek 2: ``numpy.bool_`` Python ``bool``'un alt-sınıfı DEĞİLDİR
+        (``isinstance(np.bool_(True), bool)`` → False) — o dal HİÇBİR zaman
+        numpy'yı yakalamadı; ``np.bool_`` aşağıdaki
+        ``TypeError: jcs-desteklenmeyen-tip`` dalına düşer (aşağıda pinlendi).
+        NumPy değerleri JCS'e ancak ``_json_saf_yap`` normalizasyonundan
+        geçtikten sonra (saf ``bool`` olarak) girebilir — FL-FLEKSA-B1.
         """
-        # bool alt-sınıfı oluşturulamaz → savunma dalı canlandırılamaz
+        # bool alt-sınıfı oluşturulamaz → savunma dalı canlandırılamazdı
         with pytest.raises(TypeError, match="not an acceptable base type"):
             class _BoolAltSinif(bool):  # noqa: N801
                 pass
@@ -243,6 +248,11 @@ class TestJcsKodlayici:
         assert "".join(cikti) == "truefalse[true,false]"
         # bool'ların özeti: True/False dışında bool örneği yoktur
         assert {True, False} == set(b for b in (True, False) if isinstance(b, bool))
+        # Gerçek 2: np.bool_ bool DEGILDIR → desteklenmeyen-tip reddi (sessiz
+        # "true" üretimi YOK; bu, kaldırılan dalın numpy'yı koruduğu yanılmasını kapatır)
+        assert not isinstance(np.bool_(True), bool)
+        with pytest.raises(TypeError, match="jcs-desteklenmeyen-tip"):
+            _encode(np.bool_(True), [])
 
     @pytest.mark.parametrize("girdi, beklenen", [
         ('"', '\\"'),        # _ESCAPE tablosu — çift tırnak

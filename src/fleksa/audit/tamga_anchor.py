@@ -172,14 +172,23 @@ def _enc_string(s: str) -> str:
 
 
 def _encode(o: Any, out: List[str]) -> None:
+    # OLU-DAL TEMİZLİĞİ (P3, davranış DEĞİŞMEDİ): burada bir zamanlar
+    # ``elif isinstance(o, bool): true/false`` savunma dalı vardı. CPython'da
+    # ``bool`` alt-sınıflandırılamaz ("type 'bool' is not an acceptable base
+    # type"), dolayısıyla ``bool`` türünün TEK iki örneği ``True``/``False``
+    # singleton'larıdır ve yukarıdaki iki ``is`` dalı zaten onları yakalar;
+    # ``isinstance(o, bool) && not (o is True or o is False)`` kümesi BOŞTUR →
+    # dal erişilemezdi. ``numpy.bool_`` da Python ``bool``'un alt-sınıfı DEĞİLDİR
+    # (``isinstance(np.bool_(True), bool)`` → False), o yüzden bu dala hiç
+    # giremez; aşağıdaki ``TypeError: jcs-desteklenmeyen-tip`` dalına düşer.
+    # Her iki gerçeklik testle pinlendi:
+    # ``tests/test_tamga_anchor_dallar.py::TestJcsKodlayici::test_bool_savunma_dali_odur_kod``.
     if o is None:
         out.append("null")
     elif o is True:
         out.append("true")
     elif o is False:
         out.append("false")
-    elif isinstance(o, bool):        # savunma: bool, int'ın alt-sınıfıdır
-        out.append("true" if o else "false")
     elif isinstance(o, int):
         # RFC 7493: tamsayılar [−2^53, 2^53] içinde olmalı; ECMAScript Number
         # (IEEE-754) sınır-aşan değeri temsil edemediğinden Node yuvarlar,
@@ -316,8 +325,17 @@ class TamgaLedger:
     """TamgaProtocol ledger modeli: ``h = sha256(prev ‖ jcs(kayıt − {h}))``.
 
     Kayıt şeması: ``{"seq" (1-based), "prev", "h"} + keyli yük alanları``.
-    Append-only; ``verify()`` zinciri yeniden-türetir; ``yukle()`` bozuk
-    zinciri belleğe hiç almaz (fail-closed).
+    Append-only; ``verify()`` zinciri yeniden-türetir.
+
+    ``yukle()``/``jsonl_oku()`` fail-closed sözleşmesinin GERÇEK kapsamı
+    (P3 belge tutarsızlığı düzeltmesi — davranış değişmedi): bozuk KAYIT
+    zincire hiç eklenmez ve ``BozukTamgaZinciriError`` fırlatılır; ancak
+    kayıtlar tek-tek doğrulanıp anında eklendiği için, N. kayıt bozuksa
+    1..N−1 geçerli önek ledger'da bellekte KALIR. Yani "belleğe hiç girmez"
+    sözü yalnızca kırık kaydı, bütün zinciri değil kapsar — atomik
+    ("hepsi-veya-hiçbiri") geri yükleme isteyen çağıran, ``BozukTamgaZinciriError``
+    yakalandıktan sonra yarım kalan ledger'ı atıp yenisini kurmalıdır (kalan
+    önek kendi başına tutarlıdır: ``verify()`` ``True`` döner).
     """
 
     def __init__(self) -> None:
@@ -377,7 +395,16 @@ class TamgaLedger:
 
     def yukle(self, kayitlar: Sequence[Dict[str, Any]]) -> None:
         """Kayıtlı Tamga zincirini yeniden-kur; her kayıt için seq/prev/hash
-        yeniden-doğrulanır — bozuk zincir belleğe HİÇ girmez (fail-closed)."""
+        yeniden-doğrulanır.
+
+        Fail-closed KAPSAMI (P3 belge tutarsızlığı düzeltmesi — davranış
+        değişmedi): bozuk KAYIT zincire hiç eklenmez ve ``BozukTamgaZinciriError``
+        fırlatılır. Kayıtlar tek-tek doğrulanıp anında eklendiği için, N. kayıt
+        bozuksa 1..N−1 geçerli önek bellekte KALIR; yani "bozuk zincir belleğe
+        HİÇ girmez" sözü bütün zincir için değil yalnızca kırık kayıt için
+        doğrudur. Gerçek davranışın pini:
+        ``tests/test_tamga_anchor_dallar.py::TestTamgaLedger::test_yukle_fail_closed_kirik_kayit_alinmaz``.
+        """
         for gelen in kayitlar:
             seq = gelen.get("seq")
             prev = gelen.get("prev")
@@ -427,7 +454,13 @@ class TamgaLedger:
         return str(yol)
 
     def jsonl_oku(self, yol: str | Path) -> None:
-        """JSONL'den fail-closed yeniden-yükleme."""
+        """JSONL'den fail-closed yeniden-yükleme.
+
+        Satırlar önce TAM liste olarak belleğe okunur, sonra ``yukle``'e
+        verilir; dolayısıyla kırılma noktasına kadar olan geçerli önek
+        ledger'da kalır (``yukle`` docstring'indeki kapsam notuna bakın) —
+        "hepsi-veya-hiçbiri" atomikliği yoktur.
+        """
         yol = Path(yol)
         kayitlar = []
         with open(yol, "r", encoding="utf-8") as f:
