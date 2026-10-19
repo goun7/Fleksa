@@ -27,7 +27,7 @@ Gereksinim: Python ≥ 3.11 ve `scipy`, `numpy`, `pydantic`, `click`, `cryptogra
 Bunlar bu makinede **zaten yüklü** ( scipy 1.18.1, pydantic 2.13.5).
 
 ```bash
-# 0) Testleri çalıştır ( 641 test, hepsi yeşil olmalı — rc=0, 2026-10-18 LEED-ölçümü)
+# 0) Testleri çalıştır ( 660 test, hepsi yeşil olmalı — rc=0, 2026-10-19 LEED-ölçümü)
 python3 -m pytest tests/ -q
 
 # 1) Kurulum gerektirmeden, kaynak üzerinden çalıştır

@@ -316,3 +316,29 @@ def test_invalid_json_does_not_crash():
     # ping hâlâ yanıtlanmalı — sunucu ayakta
     ids = [d["id"] for d in out if "result" in d or "error" in d]
     assert 9 in ids
+
+
+# ------------------------------------------------- G24-README-test-sayisi-pini
+
+def test_readme_test_count_is_not_stale():
+    """G24-pini: README'nin test-sayisi iddia-sayisi gercek-collect'e esit.
+    Eski-641-olgusu: G13-MCP-commiti 16-yeni-test ekledi ama README'deki
+    sayi-guncellenmedi - stale-iddia, olcum-tarafindan-yakalanmali."""
+    import re as _re
+    import subprocess as _sub
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    m = _re.search(r"Testleri [^\n]*\(\s*(\d+)\s*test", readme)
+    assert m, "README test-sayisi-satiri-bulunamadi"
+    claimed = int(m.group(1))
+    res = _sub.run(
+        [sys.executable, "-m", "pytest", "tests/", "--collect-only"],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=300)
+    assert res.returncode == 0, res.stderr[-400:]
+    num = None
+    for ln in res.stdout.splitlines():
+        mm = _re.search(r"(\d+) tests? collected", ln)
+        if mm:
+            num = int(mm.group(1))
+    assert num is not None, "collect-total-ayristirilamadi: %r" % res.stdout[-300:]
+    assert num == claimed, (
+        "README-stale-test-sayisi: iddia=%d gercek=%d" % (claimed, num))
