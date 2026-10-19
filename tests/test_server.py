@@ -213,3 +213,58 @@ def test_server_api_audit_baseline(live_server):
     assert len(data["merkle_root"]) == 64
 
 
+
+
+# --- FLEKSA-G6 (gece-turu 2026-10-19): UI-frontend'in cagirdigi TAMAM \
+#        POST-yuzeyi pin'lendi (GET-ile-karisiklik olcum-hatasi ders) ---
+def test_ui_frontend_post_rc_matrix(live_server):
+    """UI ( src/fleksa/ui/app.js) gercek cagirdigi 5 POST ucunun rc-matrix'i.
+    LEAD-olcumunden gelen ders: bu uclar GET'de 404 verir (dogru davranis),
+    POST'ta calisir. Olcum-yapan kisi GET/POST'u karistirdiginda "bozuk"
+    gorunur - bu test karistiramayacagi bir pin olarak durur."""
+    ucuclar = (
+        ("solve", {"initial_soc": 250.0, "capacity": 500.0, "max_kw": 250.0},
+         ("status", "OPTIMAL")),
+        ("arbitrage-gate", {}, ("is_viable", True)),
+        ("canary/quorum", {}, ("consensus_achieved", True)),
+        ("audit/baseline", {}, ("baseline_raw_kw", None)),
+    )
+    for ad, govde, (anahtar, beklenen) in ucuclar:
+        req = urllib.request.Request(
+            f"{live_server}/api/{ad}",
+            data=json.dumps(govde).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as res:
+            assert res.status == 200, ad
+            data = json.loads(res.read().decode("utf-8"))
+        if beklenen is None:
+            assert isinstance(data[anahtar], list) and len(data[anahtar]) > 0, ad
+        else:
+            assert data[anahtar] == beklenen, (ad, data.get(anahtar))
+
+    # verify-policy: govdesiz POST 400 + structured-JSON hatasi vermeli
+    # ( KeyError/traceback DEGIL - fail-loud ama protokol-disina cikma)
+    req = urllib.request.Request(
+        f"{live_server}/api/verify-policy",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as ex:
+        urllib.request.urlopen(req, timeout=30)
+    assert ex.value.code == 400, ex.value.code
+    govde = ex.value.read().decode("utf-8")
+    data = json.loads(govde)
+    assert data["error"] == "Missing policy_yaml in request body", data
+
+
+def test_get_on_post_endpoints_is_404_not_crash(live_server):
+    """POST-only uclara GET yapilirsa 404 JSON donmeli - sunucu
+    ayakta kalmali (traceback/crash YOK)."""
+    for ad in ("solve", "verify-policy", "arbitrage-gate",
+               "canary/quorum", "audit/baseline"):
+        with pytest.raises(urllib.error.HTTPError) as ex:
+            urllib.request.urlopen(f"{live_server}/api/{ad}", timeout=30)
+        assert ex.value.code == 404, ad
