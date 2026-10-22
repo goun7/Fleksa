@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fleksa"
-version = "0.1.0"
+version = "0.1.1"
 description = "Autonomous Energy Flexibility, Distributed BESS Arbitrage & Grid-Interactive AI Compute Demand Response Engine"
 readme = "FLEKSA.md"
 authors = [{ name = "Fleksa Contributors" }]
